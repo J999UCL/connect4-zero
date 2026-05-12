@@ -266,7 +266,9 @@ class SelfPlayProgressLogger:
                 "ply_search_end ply=%s active_games=%s duration=%s total_visits=%s visits_per_sec=%.1f "
                 "leaf_evals=%s terminal_evals=%s leaf_batches=%s max_leaf_batch=%s "
                 "tree_reuse_hits=%s tree_fresh_roots=%s "
-                "mean_root_value=%.4f mean_policy_entropy=%.4f",
+                "expanded_children=%s expansion_batches=%s max_expansion_batch=%s "
+                "timing_prepare=%.4f timing_select=%.4f timing_expand=%.4f timing_rollout=%.4f "
+                "timing_backprop=%.4f timing_build=%.4f mean_root_value=%.4f mean_policy_entropy=%.4f",
                 ply,
                 payload["active_games"],
                 format_seconds(duration),
@@ -278,6 +280,15 @@ class SelfPlayProgressLogger:
                 payload.get("max_leaf_batch", "na"),
                 payload.get("tree_reuse_hits", "na"),
                 payload.get("tree_fresh_roots", "na"),
+                payload.get("expanded_children", "na"),
+                payload.get("expansion_batches", "na"),
+                payload.get("max_expansion_batch", "na"),
+                payload.get("timing_prepare", -1.0),
+                payload.get("timing_select", -1.0),
+                payload.get("timing_expand", -1.0),
+                payload.get("timing_rollout", -1.0),
+                payload.get("timing_backprop", -1.0),
+                payload.get("timing_build", -1.0),
                 payload["mean_root_value"],
                 payload["mean_policy_entropy"],
             )

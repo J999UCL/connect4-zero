@@ -184,6 +184,9 @@ Many selected leaves are held with virtual loss, evaluated together by
 `BatchedRandomRolloutEvaluator`, then backpropagated through their full paths.
 The explicit Python tree runs on CPU; `rollout_device="cuda"` sends only the
 packed leaf rollout batches to the GPU.
+Child expansion is also batched: selected `(parent node, action)` requests are
+packed into a `Connect4x4x4Batch`, stepped together, then attached back to the
+Python tree.
 During self-play, when the sampled action already exists in the searched root,
 the child subtree is reused as the next ply's root. That preserves visits,
 values, and expanded descendants instead of rebuilding from zero after every

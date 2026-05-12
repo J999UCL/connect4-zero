@@ -164,6 +164,15 @@ class SelfPlayGenerator:
                     "max_leaf_batch": self._max_search_leaf_batch(),
                     "tree_reuse_hits": int(getattr(self.search, "last_reused_roots", -1)),
                     "tree_fresh_roots": int(getattr(self.search, "last_fresh_roots", -1)),
+                    "expanded_children": int(getattr(self.search, "last_expanded_children", -1)),
+                    "expansion_batches": len(getattr(self.search, "last_expansion_batch_sizes", [])),
+                    "max_expansion_batch": self._max_search_expansion_batch(),
+                    "timing_prepare": self._search_timing("prepare_trees"),
+                    "timing_select": self._search_timing("select"),
+                    "timing_expand": self._search_timing("expand"),
+                    "timing_rollout": self._search_timing("rollout_eval"),
+                    "timing_backprop": self._search_timing("backprop"),
+                    "timing_build": self._search_timing("build_result"),
                 },
             )
             root_legal_mask = roots.legal_mask()
@@ -393,3 +402,11 @@ class SelfPlayGenerator:
     def _max_search_leaf_batch(self) -> int:
         batch_sizes = getattr(self.search, "last_leaf_batch_sizes", [])
         return int(max(batch_sizes)) if batch_sizes else 0
+
+    def _max_search_expansion_batch(self) -> int:
+        batch_sizes = getattr(self.search, "last_expansion_batch_sizes", [])
+        return int(max(batch_sizes)) if batch_sizes else 0
+
+    def _search_timing(self, key: str) -> float:
+        timings = getattr(self.search, "last_timing_seconds", {})
+        return float(timings.get(key, -1.0))

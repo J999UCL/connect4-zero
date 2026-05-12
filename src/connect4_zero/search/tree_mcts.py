@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from typing import List, Optional, Protocol, Sequence
 
@@ -29,10 +30,22 @@ class SelectedPath:
     tree_index: int
     path: List[TreeNode]
     terminal_value: Optional[float]
+    virtual_loss_path: List[TreeNode]
 
     @property
     def leaf(self) -> TreeNode:
         return self.path[-1]
+
+
+@dataclass
+class ExpansionRequest:
+    """A reserved child expansion waiting for batched engine stepping."""
+
+    tree_index: int
+    tree: SearchTree
+    parent: TreeNode
+    parent_path: List[TreeNode]
+    action: int
 
 
 class BatchedTreeMCTS:
@@ -57,6 +70,9 @@ class BatchedTreeMCTS:
         self.last_leaf_batch_sizes: List[int] = []
         self.last_reused_roots = 0
         self.last_fresh_roots = 0
+        self.last_expansion_batch_sizes: List[int] = []
+        self.last_expanded_children = 0
+        self.last_timing_seconds = self._empty_timing()
 
     def search_batch(self, roots: Connect4x4x4Batch) -> BatchedSearchResult:
         """Search a batch of roots without mutating the caller's states."""
@@ -68,9 +84,12 @@ class BatchedTreeMCTS:
         root_trees: Optional[Sequence[Optional[SearchTree]]] = None,
     ) -> BatchedSearchResult:
         """Search roots, reusing matching trees when supplied."""
+        self._reset_diagnostics([])
+        started_at = time.perf_counter()
         search_roots = self._prepare_roots(roots)
         trees = self._prepare_trees(search_roots, root_trees)
-        self._reset_diagnostics(trees)
+        self.last_trees = trees
+        self._add_timing("prepare_trees", started_at)
 
         remaining = [
             0 if tree.root.is_terminal else self.config.simulations_per_root
@@ -79,36 +98,55 @@ class BatchedTreeMCTS:
         total_remaining = sum(remaining)
 
         while total_remaining > 0:
-            pending: List[SelectedPath] = []
+            expansion_requests: List[ExpansionRequest] = []
 
-            while len(pending) < self.config.max_leaf_batch_size and total_remaining > 0:
+            while len(expansion_requests) < self.config.max_leaf_batch_size and total_remaining > 0:
                 made_progress = False
                 for tree_index, tree in enumerate(trees):
                     if remaining[tree_index] <= 0:
                         continue
 
-                    selected = self._select_path(tree_index, tree)
+                    selection_started_at = time.perf_counter()
+                    selected = self._select_path_or_expansion(tree_index, tree)
+                    self._add_timing("select", selection_started_at)
+                    if selected is None:
+                        continue
+
                     remaining[tree_index] -= 1
                     total_remaining -= 1
                     made_progress = True
 
-                    if selected.terminal_value is None:
-                        self._apply_virtual_loss(selected.path)
-                        pending.append(selected)
+                    if isinstance(selected, ExpansionRequest):
+                        self._apply_virtual_loss(selected.parent_path)
+                        expansion_requests.append(selected)
+                    elif selected.terminal_value is None:
+                        raise RuntimeError("selected path without expansion must be terminal")
                     else:
-                        self._backpropagate(selected.path, selected.terminal_value)
+                        self._backpropagate_selected(selected, selected.terminal_value)
                         self.last_terminal_evaluations += 1
 
-                    if len(pending) >= self.config.max_leaf_batch_size or total_remaining == 0:
+                    if len(expansion_requests) >= self.config.max_leaf_batch_size or total_remaining == 0:
                         break
 
                 if not made_progress:
                     break
 
+            if not expansion_requests:
+                if total_remaining > 0:
+                    raise RuntimeError("MCTS selection stalled with no expandable or terminal paths")
+                break
+
+            pending, terminal_paths = self._expand_requests(expansion_requests)
+            for selected in terminal_paths:
+                self._backpropagate_selected(selected, selected.terminal_value)
+                self.last_terminal_evaluations += 1
             if pending:
                 self._evaluate_pending(pending)
 
-        return self._build_result(trees, device=search_roots.device)
+        build_started_at = time.perf_counter()
+        result = self._build_result(trees, device=search_roots.device)
+        self._add_timing("build_result", build_started_at)
+        return result
 
     def advance_tree(self, tree: SearchTree, action: int) -> Optional[SearchTree]:
         """Reuse the searched child tree after ``action`` is played."""
@@ -169,28 +207,51 @@ class BatchedTreeMCTS:
             and torch.equal(root.outcome, state.outcome)
         )
 
-    def _select_path(self, tree_index: int, tree: SearchTree) -> SelectedPath:
+    def _select_path_or_expansion(
+        self,
+        tree_index: int,
+        tree: SearchTree,
+    ) -> SelectedPath | ExpansionRequest | None:
         node = tree.root
         path = [node]
 
         while True:
             if node.is_terminal:
-                return SelectedPath(tree_index=tree_index, path=path, terminal_value=node.terminal_value)
+                return SelectedPath(
+                    tree_index=tree_index,
+                    path=path,
+                    terminal_value=node.terminal_value,
+                    virtual_loss_path=[],
+                )
 
             unexpanded_actions = node.unexpanded_actions()
             if unexpanded_actions:
-                child = tree.expand_child(node, unexpanded_actions[0])
-                path.append(child)
-                return SelectedPath(tree_index=tree_index, path=path, terminal_value=child.terminal_value)
+                action = unexpanded_actions[0]
+                tree.reserve_child(node, action)
+                return ExpansionRequest(
+                    tree_index=tree_index,
+                    tree=tree,
+                    parent=node,
+                    parent_path=list(path),
+                    action=action,
+                )
 
             if not node.legal_actions:
                 node.terminal_value = 0.0
-                return SelectedPath(tree_index=tree_index, path=path, terminal_value=0.0)
+                return SelectedPath(
+                    tree_index=tree_index,
+                    path=path,
+                    terminal_value=0.0,
+                    virtual_loss_path=[],
+                )
 
-            node = self._select_child(node)
+            child = self._select_child(node)
+            if child is None:
+                return None
+            node = child
             path.append(node)
 
-    def _select_child(self, node: TreeNode) -> TreeNode:
+    def _select_child(self, node: TreeNode) -> Optional[TreeNode]:
         best_child: Optional[TreeNode] = None
         best_score = -math.inf
 
@@ -204,8 +265,6 @@ class BatchedTreeMCTS:
                 best_score = score
                 best_child = child
 
-        if best_child is None:
-            raise RuntimeError("cannot select a child from a node with no expanded children")
         return best_child
 
     def _uct_score(self, parent: TreeNode, child: TreeNode) -> float:
@@ -234,15 +293,84 @@ class BatchedTreeMCTS:
             if node.virtual_visits < 0:
                 raise RuntimeError("virtual visit count became negative")
 
+    def _expand_requests(
+        self,
+        requests: List[ExpansionRequest],
+    ) -> tuple[List[SelectedPath], List[SelectedPath]]:
+        started_at = time.perf_counter()
+        parent_states = self._make_parent_batch(requests)
+        actions = torch.tensor(
+            [request.action for request in requests],
+            dtype=torch.long,
+            device=parent_states.device,
+        )
+        result = parent_states.step(actions)
+        if not bool(result.legal.all().item()):
+            for request in requests:
+                request.parent.pending_actions.discard(request.action)
+            raise RuntimeError("batched expansion attempted an illegal action")
+
+        rollout_paths: List[SelectedPath] = []
+        terminal_paths: List[SelectedPath] = []
+        for index, request in enumerate(requests):
+            child_state = self._slice_state(parent_states, index)
+            terminal_value = self._terminal_value_at(result, index)
+            child = request.tree.attach_child(
+                parent=request.parent,
+                action=request.action,
+                child_state=child_state,
+                terminal_value=terminal_value,
+            )
+            selected = SelectedPath(
+                tree_index=request.tree_index,
+                path=request.parent_path + [child],
+                terminal_value=terminal_value,
+                virtual_loss_path=request.parent_path,
+            )
+            if terminal_value is None:
+                rollout_paths.append(selected)
+            else:
+                terminal_paths.append(selected)
+
+        self.last_expanded_children += len(requests)
+        self.last_expansion_batch_sizes.append(len(requests))
+        self._add_timing("expand", started_at)
+        return rollout_paths, terminal_paths
+
     def _evaluate_pending(self, pending: List[SelectedPath]) -> None:
+        started_at = time.perf_counter()
         states = self._make_leaf_batch(pending)
         values = self.evaluator.evaluate_batch(states).detach().cpu().tolist()
+        self._add_timing("rollout_eval", started_at)
         self.last_leaf_evaluations += len(pending)
         self.last_leaf_batch_sizes.append(len(pending))
 
         for selected, value in zip(pending, values):
-            self._clear_virtual_loss(selected.path)
-            self._backpropagate(selected.path, float(value))
+            self._backpropagate_selected(selected, float(value))
+
+    def _backpropagate_selected(self, selected: SelectedPath, leaf_value: float | None) -> None:
+        if leaf_value is None:
+            raise RuntimeError("cannot backpropagate an unresolved leaf value")
+        self._clear_virtual_loss(selected.virtual_loss_path)
+        started_at = time.perf_counter()
+        self._backpropagate(selected.path, float(leaf_value))
+        self._add_timing("backprop", started_at)
+
+    def _make_parent_batch(self, requests: List[ExpansionRequest]) -> Connect4x4x4Batch:
+        device = requests[0].parent.state.device
+        states = Connect4x4x4Batch(len(requests), device=device)
+        states.board = torch.cat([request.parent.state.board for request in requests], dim=0).clone()
+        states.heights = torch.cat([request.parent.state.heights for request in requests], dim=0).clone()
+        states.done = torch.cat([request.parent.state.done for request in requests], dim=0).clone()
+        states.outcome = torch.cat([request.parent.state.outcome for request in requests], dim=0).clone()
+        return states
+
+    def _terminal_value_at(self, result, index: int) -> Optional[float]:
+        if bool(result.won[index].item()):
+            return -1.0
+        if bool(result.draw[index].item()):
+            return 0.0
+        return None
 
     def _make_leaf_batch(self, pending: List[SelectedPath]) -> Connect4x4x4Batch:
         device = pending[0].leaf.state.device
@@ -301,3 +429,19 @@ class BatchedTreeMCTS:
         self.last_leaf_evaluations = 0
         self.last_terminal_evaluations = 0
         self.last_leaf_batch_sizes = []
+        self.last_expansion_batch_sizes = []
+        self.last_expanded_children = 0
+        self.last_timing_seconds = self._empty_timing()
+
+    def _empty_timing(self) -> dict[str, float]:
+        return {
+            "prepare_trees": 0.0,
+            "select": 0.0,
+            "expand": 0.0,
+            "rollout_eval": 0.0,
+            "backprop": 0.0,
+            "build_result": 0.0,
+        }
+
+    def _add_timing(self, key: str, started_at: float) -> None:
+        self.last_timing_seconds[key] += time.perf_counter() - started_at

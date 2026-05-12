@@ -83,7 +83,9 @@ def main(argv: list[str] | None = None) -> int:
         duration = time.perf_counter() - started_at
         logger.info(
             "warmup_iteration=%s duration=%s visits=%s leaf_evals=%s terminal_evals=%s "
-            "leaf_batches=%s max_leaf_batch=%s policy_mean_sum=%.6f",
+            "leaf_batches=%s max_leaf_batch=%s expanded_children=%s expansion_batches=%s "
+            "max_expansion_batch=%s timing_prepare=%.4f timing_select=%.4f timing_expand=%.4f "
+            "timing_rollout=%.4f timing_backprop=%.4f timing_build=%.4f policy_mean_sum=%.6f",
             index,
             format_seconds(duration),
             int(result.visit_counts.sum().detach().cpu().item()),
@@ -91,6 +93,15 @@ def main(argv: list[str] | None = None) -> int:
             search.last_terminal_evaluations,
             len(search.last_leaf_batch_sizes),
             max(search.last_leaf_batch_sizes) if search.last_leaf_batch_sizes else 0,
+            search.last_expanded_children,
+            len(search.last_expansion_batch_sizes),
+            max(search.last_expansion_batch_sizes) if search.last_expansion_batch_sizes else 0,
+            search.last_timing_seconds["prepare_trees"],
+            search.last_timing_seconds["select"],
+            search.last_timing_seconds["expand"],
+            search.last_timing_seconds["rollout_eval"],
+            search.last_timing_seconds["backprop"],
+            search.last_timing_seconds["build_result"],
             result.policy.sum(dim=1).mean().detach().cpu().item(),
         )
         log_cuda_memory(logger, prefix="cuda.warmup")
@@ -115,8 +126,11 @@ def main(argv: list[str] | None = None) -> int:
         total_rollouts += rollouts
         logger.info(
             "iteration=%s duration=%s roots=%s visits=%s leaf_evals=%s terminal_evals=%s "
-            "leaf_batches=%s max_leaf_batch=%s rollout_games_est=%s roots_per_sec=%.2f "
-            "visits_per_sec=%.1f rollout_games_per_sec_est=%.1f root_value_mean=%.4f",
+            "leaf_batches=%s max_leaf_batch=%s expanded_children=%s expansion_batches=%s "
+            "max_expansion_batch=%s rollout_games_est=%s roots_per_sec=%.2f "
+            "visits_per_sec=%.1f rollout_games_per_sec_est=%.1f timing_prepare=%.4f "
+            "timing_select=%.4f timing_expand=%.4f timing_rollout=%.4f timing_backprop=%.4f "
+            "timing_build=%.4f root_value_mean=%.4f",
             index,
             format_seconds(duration),
             args.batch_size,
@@ -125,10 +139,19 @@ def main(argv: list[str] | None = None) -> int:
             search.last_terminal_evaluations,
             len(search.last_leaf_batch_sizes),
             max(search.last_leaf_batch_sizes) if search.last_leaf_batch_sizes else 0,
+            search.last_expanded_children,
+            len(search.last_expansion_batch_sizes),
+            max(search.last_expansion_batch_sizes) if search.last_expansion_batch_sizes else 0,
             rollouts,
             args.batch_size / duration if duration > 0 else 0.0,
             visits / duration if duration > 0 else 0.0,
             rollouts / duration if duration > 0 else 0.0,
+            search.last_timing_seconds["prepare_trees"],
+            search.last_timing_seconds["select"],
+            search.last_timing_seconds["expand"],
+            search.last_timing_seconds["rollout_eval"],
+            search.last_timing_seconds["backprop"],
+            search.last_timing_seconds["build_result"],
             result.root_values.mean().detach().cpu().item(),
         )
         log_cuda_memory(logger, prefix="cuda.iteration")

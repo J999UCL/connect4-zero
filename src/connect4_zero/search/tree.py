@@ -25,6 +25,7 @@ class TreeNode:
     virtual_visits: int = 0
     virtual_value_sum: float = 0.0
     depth: int = 0
+    pending_actions: set[int] = field(default_factory=set)
     children: List[Optional["TreeNode"]] = field(
         default_factory=lambda: [None for _ in range(ACTION_SIZE)]
     )
@@ -52,10 +53,17 @@ class TreeNode:
 
     @property
     def is_fully_expanded(self) -> bool:
-        return all(self.children[action] is not None for action in self.legal_actions)
+        return all(
+            self.children[action] is not None or action in self.pending_actions
+            for action in self.legal_actions
+        )
 
     def unexpanded_actions(self) -> Tuple[int, ...]:
-        return tuple(action for action in self.legal_actions if self.children[action] is None)
+        return tuple(
+            action
+            for action in self.legal_actions
+            if self.children[action] is None and action not in self.pending_actions
+        )
 
 
 @dataclass
@@ -83,26 +91,57 @@ class SearchTree:
 
     def expand_child(self, parent: TreeNode, action: int) -> TreeNode:
         """Expand ``parent/action`` and return the resulting child node."""
+        self.reserve_child(parent, action)
+        try:
+            child_state = parent.state.clone()
+            result = child_state.step(torch.tensor([action], dtype=torch.long, device=child_state.device))
+            if not bool(result.legal[0].item()):
+                raise RuntimeError(f"engine rejected legal action {action}")
+            return self.attach_child(
+                parent=parent,
+                action=action,
+                child_state=child_state,
+                terminal_value=terminal_value_for_child(result),
+            )
+        except Exception:
+            parent.pending_actions.discard(action)
+            raise
+
+    def reserve_child(self, parent: TreeNode, action: int) -> None:
+        """Reserve ``parent/action`` for later batched expansion."""
         if parent.is_terminal:
             raise RuntimeError("cannot expand a terminal node")
         if action not in parent.legal_actions:
             raise RuntimeError(f"cannot expand illegal action {action}")
+        if parent.children[action] is not None:
+            raise RuntimeError(f"cannot reserve already expanded action {action}")
+        if action in parent.pending_actions:
+            raise RuntimeError(f"cannot reserve already pending action {action}")
+        parent.pending_actions.add(action)
 
-        existing = parent.children[action]
-        if existing is not None:
-            return existing
+    def attach_child(
+        self,
+        parent: TreeNode,
+        action: int,
+        child_state: Connect4x4x4Batch,
+        terminal_value: Optional[float],
+    ) -> TreeNode:
+        """Attach a previously reserved child state to ``parent/action``."""
+        if parent.children[action] is not None:
+            parent.pending_actions.discard(action)
+            return parent.children[action]
+        if action not in parent.legal_actions:
+            parent.pending_actions.discard(action)
+            raise RuntimeError(f"cannot attach illegal action {action}")
+        _validate_single_state(child_state)
 
-        child_state = parent.state.clone()
-        result = child_state.step(torch.tensor([action], dtype=torch.long, device=child_state.device))
-        if not bool(result.legal[0].item()):
-            raise RuntimeError(f"engine rejected legal action {action}")
-
+        parent.pending_actions.discard(action)
         child = TreeNode(
             state=child_state,
             parent=parent,
             parent_action=action,
             legal_actions=legal_actions_for_state(child_state),
-            terminal_value=terminal_value_for_child(result),
+            terminal_value=terminal_value,
             depth=parent.depth + 1,
         )
         parent.children[action] = child

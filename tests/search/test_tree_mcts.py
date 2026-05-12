@@ -4,6 +4,7 @@ import pytest
 from connect4_zero.game import Connect4x4x4Batch
 from connect4_zero.game.constants import ACTION_SIZE, BOARD_SIZE, CURRENT_PLAYER
 from connect4_zero.search import BatchedTreeMCTS, SearchTree, TreeMCTSConfig
+from connect4_zero.search.tree_mcts import ExpansionRequest
 
 
 class RecordingEvaluator:
@@ -55,6 +56,53 @@ def test_terminal_child_is_marked_with_exact_value() -> None:
     assert child.is_terminal
 
 
+def test_pending_reservations_hide_actions_from_unexpanded_list() -> None:
+    tree = SearchTree.from_state(Connect4x4x4Batch(batch_size=1))
+
+    tree.reserve_child(tree.root, 0)
+
+    assert 0 in tree.root.pending_actions
+    assert 0 not in tree.root.unexpanded_actions()
+    with pytest.raises(RuntimeError, match="already pending"):
+        tree.reserve_child(tree.root, 0)
+
+
+def test_batched_expansion_creates_children_matching_individual_steps() -> None:
+    root = Connect4x4x4Batch(batch_size=1)
+    tree = SearchTree.from_state(root)
+    search = BatchedTreeMCTS(
+        TreeMCTSConfig(simulations_per_root=1),
+        evaluator=RecordingEvaluator(),
+    )
+    actions = [0, 5, 15]
+    requests = []
+    for action in actions:
+        tree.reserve_child(tree.root, action)
+        requests.append(
+            ExpansionRequest(
+                tree_index=0,
+                tree=tree,
+                parent=tree.root,
+                parent_path=[tree.root],
+                action=action,
+            )
+        )
+
+    rollout_paths, terminal_paths = search._expand_requests(requests)
+
+    assert len(rollout_paths) == len(actions)
+    assert terminal_paths == []
+    assert tree.root.pending_actions == set()
+    assert search.last_expansion_batch_sizes == [len(actions)]
+    for action in actions:
+        child = tree.root.children[action]
+        expected = root.clone()
+        expected.step(torch.tensor([action], dtype=torch.long))
+        assert child is not None
+        assert torch.equal(child.state.board, expected.board)
+        assert torch.equal(child.state.heights, expected.heights)
+
+
 def test_backprop_flips_values_across_depth_two_and_three() -> None:
     tree = SearchTree.from_state(Connect4x4x4Batch(batch_size=1))
     child = tree.expand_child(tree.root, 0)
@@ -91,11 +139,13 @@ def test_virtual_loss_diversifies_pending_selection_after_root_expansion() -> No
         evaluator=RecordingEvaluator(),
     )
 
-    first = search._select_path(0, tree)
-    search._apply_virtual_loss(first.path)
-    second = search._select_path(0, tree)
+    first = search._select_path_or_expansion(0, tree)
+    assert isinstance(first, ExpansionRequest)
+    search._apply_virtual_loss(first.parent_path)
+    second = search._select_path_or_expansion(0, tree)
+    assert isinstance(second, ExpansionRequest)
 
-    assert first.path[1].parent_action != second.path[1].parent_action
+    assert first.parent_path[1].parent_action != second.parent_path[1].parent_action
 
 
 def test_search_batch_returns_deep_policy_statistics_for_many_roots() -> None:
@@ -121,6 +171,9 @@ def test_search_batch_returns_deep_policy_statistics_for_many_roots() -> None:
     assert torch.allclose(result.policy.sum(dim=1), torch.ones(2))
     assert sum(evaluator.batch_sizes) == 40
     assert max(evaluator.batch_sizes) <= 8
+    assert max(search.last_expansion_batch_sizes) > 1
+    assert search.last_expanded_children == 40
+    assert all(value >= 0.0 for value in search.last_timing_seconds.values())
 
 
 def test_search_can_reuse_child_subtree_as_next_root() -> None:

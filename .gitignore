@@ -1,0 +1,26 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environments
+.venv/
+
+# Packaging/build metadata
+*.egg-info/
+build/
+dist/
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+
+# Local experiment artifacts
+logs/
+checkpoints/
+runs/
+
+# Local/private notes
+test.md
+uclGPUS.md

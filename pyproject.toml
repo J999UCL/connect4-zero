@@ -13,6 +13,10 @@ dependencies = [
   "torch>=2.0",
 ]
 
+[project.scripts]
+connect4-benchmark-search = "connect4_zero.scripts.benchmark_search:main"
+connect4-generate-selfplay = "connect4_zero.scripts.generate_selfplay:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=7.0",

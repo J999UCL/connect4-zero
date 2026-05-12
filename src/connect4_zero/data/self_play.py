@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import torch
 
@@ -12,6 +12,8 @@ from connect4_zero.game import Connect4x4x4Batch
 from connect4_zero.game.constants import ACTION_SIZE, BOARD_CELLS, CURRENT_PLAYER, OPPONENT_PLAYER
 from connect4_zero.search import BatchedRootActionMCTS
 from connect4_zero.search.types import BatchedSearchResult, DeviceLike
+
+ProgressCallback = Callable[[str, Dict[str, float | int | str]], None]
 
 
 @dataclass(frozen=True)
@@ -48,18 +50,56 @@ class SelfPlayGenerator:
 
     def generate(self, num_games: int) -> SelfPlaySamples:
         """Generate samples from ``num_games`` complete self-play games."""
+        return self.generate_with_progress(num_games=num_games, progress_callback=None)
+
+    def generate_with_progress(
+        self,
+        num_games: int,
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> SelfPlaySamples:
+        """Generate samples and emit optional structured progress events."""
         if num_games <= 0:
             raise ValueError("num_games must be positive")
 
         batches: List[SelfPlaySamples] = []
         remaining = int(num_games)
+        batch_index = 0
+        games_completed = 0
         while remaining > 0:
             batch_games = min(remaining, self.config.batch_size)
-            batches.append(self._generate_batch(batch_games))
+            self._emit(
+                progress_callback,
+                "batch_start",
+                {
+                    "batch_index": batch_index,
+                    "batch_games": batch_games,
+                    "games_completed": games_completed,
+                    "games_total": num_games,
+                },
+            )
+            batch = self._generate_batch(batch_games, progress_callback=progress_callback)
+            batches.append(batch)
+            games_completed += batch_games
             remaining -= batch_games
+            self._emit(
+                progress_callback,
+                "batch_end",
+                {
+                    "batch_index": batch_index,
+                    "batch_games": batch_games,
+                    "batch_samples": batch.num_samples,
+                    "games_completed": games_completed,
+                    "games_total": num_games,
+                },
+            )
+            batch_index += 1
         return self._concat_samples(batches)
 
-    def _generate_batch(self, batch_games: int) -> SelfPlaySamples:
+    def _generate_batch(
+        self,
+        batch_games: int,
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> SelfPlaySamples:
         game = Connect4x4x4Batch(batch_games, device=self.device)
         player_to_move = torch.full(
             (batch_games,),
@@ -97,7 +137,28 @@ class SelfPlayGenerator:
 
             active_indices = active.nonzero(as_tuple=False).flatten()
             roots = self._index_batch(game, active_indices)
+            active_count = int(active_indices.numel())
+            self._emit(
+                progress_callback,
+                "ply_search_start",
+                {
+                    "ply": ply,
+                    "active_games": active_count,
+                    "finished_games": batch_games - active_count,
+                },
+            )
             result = self.search.search_batch(roots)
+            self._emit(
+                progress_callback,
+                "ply_search_end",
+                {
+                    "ply": ply,
+                    "active_games": active_count,
+                    "mean_root_value": float(result.root_values.mean().detach().cpu().item()),
+                    "mean_policy_entropy": self._policy_entropy(result.policy),
+                    "total_visits": int(result.visit_counts.sum().detach().cpu().item()),
+                },
+            )
             root_legal_mask = roots.legal_mask()
             chosen_actions = self._select_actions(result, root_legal_mask)
 
@@ -127,6 +188,19 @@ class SelfPlayGenerator:
             still_playing = ~active_done
             if bool(still_playing.any().item()):
                 player_to_move[active_indices[still_playing]] *= OPPONENT_PLAYER
+            self._emit(
+                progress_callback,
+                "ply_end",
+                {
+                    "ply": ply,
+                    "active_games": active_count,
+                    "wins": int(active_won.sum().detach().cpu().item()),
+                    "draws": int(active_draw.sum().detach().cpu().item()),
+                    "newly_done": int(active_done.sum().detach().cpu().item()),
+                    "still_active": int((~game.done).sum().detach().cpu().item()),
+                    "samples_so_far": sum(tensor.shape[0] for tensor in boards),
+                },
+            )
 
         if bool(game.done.all().item()):
             return self._finalize_samples(
@@ -239,3 +313,17 @@ class SelfPlayGenerator:
             generator.manual_seed(self.config.seed)
             self._generators[key] = generator
         return self._generators[key]
+
+    def _emit(
+        self,
+        progress_callback: Optional[ProgressCallback],
+        event: str,
+        payload: Dict[str, float | int | str],
+    ) -> None:
+        if progress_callback is not None:
+            progress_callback(event, payload)
+
+    def _policy_entropy(self, policy: torch.Tensor) -> float:
+        safe_policy = policy.clamp_min(1e-12)
+        entropy = -(safe_policy * safe_policy.log()).sum(dim=1)
+        return float(entropy.mean().detach().cpu().item())

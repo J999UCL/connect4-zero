@@ -206,3 +206,45 @@ boards, policies, values, visit_counts, q_values, legal_masks, actions, plies
 
 The neural network only needs `boards`, `policies`, and `values`; the extra
 search stats are kept for debugging, filtering, and analysis.
+
+### Verbose Generation Scripts
+
+Benchmark the batched search path:
+
+```bash
+connect4-benchmark-search \
+  --device cuda \
+  --batch-size 1024 \
+  --iterations 20 \
+  --warmup 3 \
+  --rollouts-per-leaf 64 \
+  --num-selection-waves 8 \
+  --log-dir /tmp/thakwani/rl-runs/benchmarks
+```
+
+Generate seed self-play shards:
+
+```bash
+connect4-generate-selfplay \
+  --device cuda \
+  --games 10000 \
+  --batch-size 1024 \
+  --games-per-write 1024 \
+  --rollouts-per-leaf 64 \
+  --num-selection-waves 8 \
+  --samples-per-shard 32768 \
+  --out /tmp/thakwani/rl-data/seed-v1
+```
+
+Both commands log live progress to stdout and write detailed timestamped logs
+under the selected output/log directory. On UCL `csh` machines, set caches and
+outputs away from home quota first:
+
+```csh
+setenv RL_DATA /tmp/thakwani/rl-data
+setenv RL_RUNS /tmp/thakwani/rl-runs
+setenv UV_CACHE_DIR /tmp/thakwani/uv-cache
+setenv PIP_CACHE_DIR /tmp/thakwani/pip-cache
+setenv TORCH_HOME /tmp/thakwani/torch-cache
+setenv XDG_CACHE_HOME /tmp/thakwani/cache
+```

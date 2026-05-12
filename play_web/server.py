@@ -22,7 +22,7 @@ if str(SRC_DIR) not in sys.path:
 
 from connect4_zero.game import Connect4x4x4Batch  # noqa: E402
 from connect4_zero.game.constants import ACTION_SIZE, BOARD_SIZE  # noqa: E402
-from connect4_zero.search import MCTS, MCTSConfig  # noqa: E402
+from connect4_zero.search.deprecated import MCTS, MCTSConfig  # noqa: E402
 
 BotActionProvider = Callable[[Connect4x4x4Batch], int]
 

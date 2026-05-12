@@ -20,6 +20,13 @@ class Evaluator(Protocol):
         """Return a scalar value in ``[-1, 1]``."""
 
 
+class BatchedSearch(Protocol):
+    """Search a batch of root states and return AlphaZero-style statistics."""
+
+    def search_batch(self, roots: Connect4x4x4Batch) -> "BatchedSearchResult":
+        """Return visit counts, policy, q-values, and root values."""
+
+
 @dataclass(frozen=True)
 class MCTSConfig:
     """Configuration for single-root MCTS."""
@@ -54,7 +61,7 @@ class SearchResult:
 
 @dataclass(frozen=True)
 class BatchedRootActionConfig:
-    """Configuration for batched root/action search.
+    """Deprecated configuration for shallow batched root/action search.
 
     Each root action evaluation is one MCTS-style leaf evaluation whose value is
     estimated by ``rollouts_per_leaf`` random continuations.
@@ -98,3 +105,37 @@ class BatchedSearchResult:
     policy: torch.Tensor
     q_values: torch.Tensor
     root_values: torch.Tensor
+
+
+@dataclass(frozen=True)
+class TreeMCTSConfig:
+    """Configuration for production batched deep MCTS."""
+
+    simulations_per_root: int = 128
+    max_leaf_batch_size: int = 4096
+    rollouts_per_leaf: int = 32
+    exploration_constant: float = 1.4
+    virtual_loss: float = 1.0
+    policy_temperature: float = 1.0
+    rollout_device: DeviceLike = None
+    seed: Optional[int] = None
+    max_rollout_steps: int = BOARD_CELLS
+    max_rollouts_per_chunk: int = 262144
+
+    def __post_init__(self) -> None:
+        if self.simulations_per_root <= 0:
+            raise ValueError("simulations_per_root must be positive")
+        if self.max_leaf_batch_size <= 0:
+            raise ValueError("max_leaf_batch_size must be positive")
+        if self.rollouts_per_leaf <= 0:
+            raise ValueError("rollouts_per_leaf must be positive")
+        if self.exploration_constant < 0:
+            raise ValueError("exploration_constant must be non-negative")
+        if self.virtual_loss < 0:
+            raise ValueError("virtual_loss must be non-negative")
+        if self.policy_temperature <= 0:
+            raise ValueError("policy_temperature must be positive")
+        if self.max_rollout_steps <= 0:
+            raise ValueError("max_rollout_steps must be positive")
+        if self.max_rollouts_per_chunk <= 0:
+            raise ValueError("max_rollouts_per_chunk must be positive")

@@ -3,7 +3,7 @@ import pytest
 
 from connect4_zero.game import Connect4x4x4Batch
 from connect4_zero.game.constants import ACTION_SIZE, BOARD_SIZE, CURRENT_PLAYER
-from connect4_zero.search import BatchedRootActionConfig, BatchedRootActionMCTS
+from connect4_zero.search.deprecated import BatchedRootActionConfig, BatchedRootActionMCTS
 
 
 def immediate_win_root(batch_size: int = 1) -> Connect4x4x4Batch:

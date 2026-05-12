@@ -28,12 +28,12 @@ from connect4_zero.scripts._common import (
     sync_if_cuda,
     timestamp_slug,
 )
-from connect4_zero.search import BatchedRootActionConfig, BatchedRootActionMCTS
+from connect4_zero.search import BatchedTreeMCTS, TreeMCTSConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate safetensor self-play shards using batched root/action search.",
+        description="Generate safetensor self-play shards using batched deep MCTS.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--games", type=int, required=True, help="Number of complete games to generate.")
@@ -42,11 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=128, help="Parallel games per self-play batch.")
     parser.add_argument("--games-per-write", type=int, default=512, help="Complete games generated before each write.")
     parser.add_argument("--samples-per-shard", type=int, default=16384, help="Samples per safetensor shard.")
-    parser.add_argument("--num-selection-waves", type=int, default=8, help="UCB revisit waves after root expansion.")
-    parser.add_argument("--leaves-per-root", type=int, default=4, help="Actions selected per root in each wave.")
-    parser.add_argument("--rollouts-per-leaf", type=int, default=64, help="Random continuations per evaluated child.")
-    parser.add_argument("--max-rollouts-per-chunk", type=int, default=65536, help="Largest rollout batch inside evaluator.")
+    parser.add_argument("--simulations-per-root", type=int, default=128, help="Full MCTS simulations per root.")
+    parser.add_argument("--max-leaf-batch-size", type=int, default=4096, help="Selected leaves evaluated per rollout batch.")
+    parser.add_argument("--rollouts-per-leaf", type=int, default=32, help="Random continuations per evaluated leaf.")
+    parser.add_argument("--max-rollouts-per-chunk", type=int, default=262144, help="Largest rollout batch inside evaluator.")
     parser.add_argument("--exploration-constant", type=float, default=1.4, help="UCB exploration constant.")
+    parser.add_argument("--virtual-loss", type=float, default=1.0, help="Virtual loss used while collecting leaf batches.")
     parser.add_argument("--policy-temperature", type=float, default=1.0, help="Visit-count policy temperature.")
     parser.add_argument("--action-temperature", type=float, default=1.0, help="Self-play action sampling temperature.")
     parser.add_argument("--max-plies", type=int, default=64, help="Safety cap for plies per game.")
@@ -73,32 +74,35 @@ def main(argv: list[str] | None = None) -> int:
     device = resolve_device(args.device)
     log_environment(logger, device)
     log_config(logger, "self-play generation config", vars(args))
+    tree_device = torch.device("cpu") if device.type in ("cuda", "mps") else device
+    logger.info("search.tree_device=%s", tree_device)
+    logger.info("search.rollout_device=%s", device)
 
-    search_config = BatchedRootActionConfig(
-        num_selection_waves=args.num_selection_waves,
-        leaves_per_root=args.leaves_per_root,
+    search_config = TreeMCTSConfig(
+        simulations_per_root=args.simulations_per_root,
+        max_leaf_batch_size=args.max_leaf_batch_size,
         rollouts_per_leaf=args.rollouts_per_leaf,
         exploration_constant=args.exploration_constant,
+        virtual_loss=args.virtual_loss,
         policy_temperature=args.policy_temperature,
         rollout_device=device,
         seed=args.seed,
         max_rollout_steps=args.max_plies,
         max_rollouts_per_chunk=args.max_rollouts_per_chunk,
-        evaluate_all_actions_first=True,
     )
     self_play_config = SelfPlayConfig(
         batch_size=args.batch_size,
-        device=device,
+        device=tree_device,
         action_temperature=args.action_temperature,
         max_plies=args.max_plies,
         seed=args.seed,
     )
-    search = BatchedRootActionMCTS(search_config)
+    search = BatchedTreeMCTS(search_config)
     generator = SelfPlayGenerator(search=search, config=self_play_config)
     writer = SelfPlayShardWriter(
         output_dir=args.out,
         samples_per_shard=args.samples_per_shard,
-        metadata=_metadata(args, device),
+        metadata=_metadata(args, device, tree_device),
     )
 
     logger.info("generation_start games=%s output=%s", args.games, args.out)
@@ -170,25 +174,34 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--games-per-write must be positive")
     if args.samples_per_shard <= 0:
         raise ValueError("--samples-per-shard must be positive")
+    if args.simulations_per_root <= 0:
+        raise ValueError("--simulations-per-root must be positive")
+    if args.max_leaf_batch_size <= 0:
+        raise ValueError("--max-leaf-batch-size must be positive")
+    if args.rollouts_per_leaf <= 0:
+        raise ValueError("--rollouts-per-leaf must be positive")
     if args.force and args.append:
         raise ValueError("--force and --append are mutually exclusive")
 
 
-def _metadata(args: argparse.Namespace, device: torch.device) -> dict[str, str]:
+def _metadata(args: argparse.Namespace, device: torch.device, tree_device: torch.device) -> dict[str, str]:
     values: dict[str, Any] = {
         "format": "connect4_zero.selfplay.v1",
         "created_at_utc": timestamp_slug(),
         "git_commit": git_commit(),
         "git_branch": git_branch(),
         "device": str(device),
+        "rollout_device": str(device),
+        "tree_device": str(tree_device),
         "games_requested": args.games,
         "batch_size": args.batch_size,
         "games_per_write": args.games_per_write,
-        "num_selection_waves": args.num_selection_waves,
-        "leaves_per_root": args.leaves_per_root,
+        "simulations_per_root": args.simulations_per_root,
+        "max_leaf_batch_size": args.max_leaf_batch_size,
         "rollouts_per_leaf": args.rollouts_per_leaf,
         "max_rollouts_per_chunk": args.max_rollouts_per_chunk,
         "exploration_constant": args.exploration_constant,
+        "virtual_loss": args.virtual_loss,
         "policy_temperature": args.policy_temperature,
         "action_temperature": args.action_temperature,
         "max_plies": args.max_plies,

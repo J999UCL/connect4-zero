@@ -9,7 +9,7 @@ import torch
 
 from connect4_zero.game import Connect4x4x4Batch, StepResult
 from connect4_zero.game.constants import ACTION_SIZE
-from connect4_zero.search.nodes import NodeStore, SearchNode, TreeNodeStore
+from connect4_zero.search.deprecated.nodes import NodeStore, SearchNode, TreeNodeStore
 from connect4_zero.search.rollout import RandomRolloutEvaluator
 from connect4_zero.search.types import Evaluator, MCTSConfig, SearchResult
 

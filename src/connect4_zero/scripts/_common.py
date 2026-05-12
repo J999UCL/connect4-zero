@@ -264,12 +264,17 @@ class SelfPlayProgressLogger:
             visits_per_sec = visits / duration if duration > 0 else 0.0
             self.logger.info(
                 "ply_search_end ply=%s active_games=%s duration=%s total_visits=%s visits_per_sec=%.1f "
+                "leaf_evals=%s terminal_evals=%s leaf_batches=%s max_leaf_batch=%s "
                 "mean_root_value=%.4f mean_policy_entropy=%.4f",
                 ply,
                 payload["active_games"],
                 format_seconds(duration),
                 visits,
                 visits_per_sec,
+                payload.get("leaf_evaluations", "na"),
+                payload.get("terminal_evaluations", "na"),
+                payload.get("leaf_batches", "na"),
+                payload.get("max_leaf_batch", "na"),
                 payload["mean_root_value"],
                 payload["mean_policy_entropy"],
             )

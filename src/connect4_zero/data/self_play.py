@@ -10,8 +10,7 @@ import torch
 from connect4_zero.data.types import SelfPlaySamples
 from connect4_zero.game import Connect4x4x4Batch
 from connect4_zero.game.constants import ACTION_SIZE, BOARD_CELLS, CURRENT_PLAYER, OPPONENT_PLAYER
-from connect4_zero.search import BatchedRootActionMCTS
-from connect4_zero.search.types import BatchedSearchResult, DeviceLike
+from connect4_zero.search.types import BatchedSearch, BatchedSearchResult, DeviceLike
 
 ProgressCallback = Callable[[str, Dict[str, float | int | str]], None]
 
@@ -40,7 +39,7 @@ class SelfPlayGenerator:
 
     def __init__(
         self,
-        search: BatchedRootActionMCTS,
+        search: BatchedSearch,
         config: Optional[SelfPlayConfig] = None,
     ) -> None:
         self.search = search
@@ -157,6 +156,10 @@ class SelfPlayGenerator:
                     "mean_root_value": float(result.root_values.mean().detach().cpu().item()),
                     "mean_policy_entropy": self._policy_entropy(result.policy),
                     "total_visits": int(result.visit_counts.sum().detach().cpu().item()),
+                    "leaf_evaluations": int(getattr(self.search, "last_leaf_evaluations", -1)),
+                    "terminal_evaluations": int(getattr(self.search, "last_terminal_evaluations", -1)),
+                    "leaf_batches": len(getattr(self.search, "last_leaf_batch_sizes", [])),
+                    "max_leaf_batch": self._max_search_leaf_batch(),
                 },
             )
             root_legal_mask = roots.legal_mask()
@@ -327,3 +330,7 @@ class SelfPlayGenerator:
         safe_policy = policy.clamp_min(1e-12)
         entropy = -(safe_policy * safe_policy.log()).sum(dim=1)
         return float(entropy.mean().detach().cpu().item())
+
+    def _max_search_leaf_batch(self) -> int:
+        batch_sizes = getattr(self.search, "last_leaf_batch_sizes", [])
+        return int(max(batch_sizes)) if batch_sizes else 0

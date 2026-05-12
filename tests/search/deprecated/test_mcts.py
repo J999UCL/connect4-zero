@@ -3,7 +3,7 @@ import pytest
 
 from connect4_zero.game import Connect4x4x4Batch
 from connect4_zero.game.constants import ACTION_SIZE, BOARD_DTYPE, BOARD_SIZE, CURRENT_PLAYER
-from connect4_zero.search import MCTS, MCTSConfig
+from connect4_zero.search.deprecated import MCTS, MCTSConfig
 
 
 class ConstantEvaluator:

@@ -2,10 +2,9 @@
 
 AlphaZero-style reinforcement learning for gravity-based 4x4x4 Connect Four.
 
-The project currently has a clean, vectorized PyTorch game engine, a reference
-classical MCTS implementation, and a batched root/action search path for
-generating AlphaZero-style seed data. Neural network training and remote GPU
-experiment scripts come later.
+The project currently has a clean, vectorized PyTorch game engine and a
+production batched deep MCTS path for generating AlphaZero-style seed data.
+Neural network training and remote GPU experiment scripts come later.
 
 ## Local Setup
 
@@ -146,19 +145,27 @@ The current tests cover:
 
 ## MCTS
 
-The Phase 2 search code lives in `connect4_zero.search`.
+The Phase 2 production search code lives in `connect4_zero.search`.
 
 ```python
 from connect4_zero.game import Connect4x4x4Batch
-from connect4_zero.search import MCTS, MCTSConfig
+from connect4_zero.search import BatchedTreeMCTS, TreeMCTSConfig
 
-game = Connect4x4x4Batch(batch_size=1)
-mcts = MCTS(MCTSConfig(num_simulations=100, rollout_batch_size=128))
-result = mcts.search(game)
+roots = Connect4x4x4Batch(batch_size=128)
+search = BatchedTreeMCTS(
+    TreeMCTSConfig(
+        simulations_per_root=128,
+        max_leaf_batch_size=4096,
+        rollouts_per_leaf=32,
+        rollout_device="cuda",
+    )
+)
+result = search.search_batch(roots)
 ```
 
-`result.policy` is a length-16 visit-count policy suitable as an AlphaZero-style
-training target. Illegal actions have probability `0`.
+`result.policy` has shape `(B, 16)` and is built from root child visit counts,
+which is the AlphaZero-style training target. Illegal actions have probability
+`0`.
 
 Value convention:
 
@@ -167,34 +174,43 @@ Value convention:
 - A terminal child where the previous mover won has value `-1` from the child
   perspective.
 
-The first `NodeStore` implementation is a plain tree. MCTS uses the store
-boundary so a future Zobrist-backed DAG can replace tree storage without
-rewriting selection, evaluation, or backpropagation.
+Each root gets a real multi-depth tree. A simulation walks:
+
+```text
+root -> child -> grandchild -> ... -> selected leaf
+```
+
+Many selected leaves are held with virtual loss, evaluated together by
+`BatchedRandomRolloutEvaluator`, then backpropagated through their full paths.
+The explicit Python tree runs on CPU; `rollout_device="cuda"` sends only the
+packed leaf rollout batches to the GPU.
+The old single-root MCTS and shallow root/action evaluator are kept under
+`connect4_zero.search.deprecated` for reference only.
 
 ## Batched Data Generation
 
-Phase 2.5 adds a separate high-throughput search path for seed data:
+Self-play uses the same deep MCTS backend:
 
 ```python
 from connect4_zero.game import Connect4x4x4Batch
-from connect4_zero.search import BatchedRootActionConfig, BatchedRootActionMCTS
+from connect4_zero.search import BatchedTreeMCTS, TreeMCTSConfig
 
 roots = Connect4x4x4Batch(batch_size=1024)
-search = BatchedRootActionMCTS(
-    BatchedRootActionConfig(
-        num_selection_waves=8,
-        leaves_per_root=4,
-        rollouts_per_leaf=64,
+search = BatchedTreeMCTS(
+    TreeMCTSConfig(
+        simulations_per_root=128,
+        max_leaf_batch_size=4096,
+        rollouts_per_leaf=32,
         rollout_device="cuda",
     )
 )
 result = search.search_batch(roots)
 ```
 
-This combines root parallelism and leaf/action parallelism:
+This combines root parallelism and leaf parallelism:
 
 ```text
-B roots x selected actions x random rollout continuations
+B roots x simulations_per_root selected leaves x random rollout continuations
 ```
 
 The self-play data utilities live in `connect4_zero.data`. Generated samples are
@@ -214,11 +230,12 @@ Benchmark the batched search path:
 ```bash
 connect4-benchmark-search \
   --device cuda \
-  --batch-size 1024 \
+  --batch-size 128 \
   --iterations 20 \
   --warmup 3 \
-  --rollouts-per-leaf 64 \
-  --num-selection-waves 8 \
+  --simulations-per-root 128 \
+  --max-leaf-batch-size 4096 \
+  --rollouts-per-leaf 32 \
   --log-dir /tmp/thakwani/rl-runs/benchmarks
 ```
 
@@ -228,10 +245,11 @@ Generate seed self-play shards:
 connect4-generate-selfplay \
   --device cuda \
   --games 10000 \
-  --batch-size 1024 \
-  --games-per-write 1024 \
-  --rollouts-per-leaf 64 \
-  --num-selection-waves 8 \
+  --batch-size 128 \
+  --games-per-write 128 \
+  --simulations-per-root 128 \
+  --max-leaf-batch-size 4096 \
+  --rollouts-per-leaf 32 \
   --samples-per-shard 32768 \
   --out /tmp/thakwani/rl-data/seed-v1
 ```

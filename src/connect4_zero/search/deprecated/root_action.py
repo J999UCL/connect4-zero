@@ -1,4 +1,4 @@
-"""Batched root/action search for high-throughput data generation."""
+"""Deprecated shallow root/action search kept for benchmark history."""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from connect4_zero.search.types import BatchedRootActionConfig, BatchedSearchRes
 class BatchedRootActionMCTS:
     """Root-parallel, action-parallel MCTS-style evaluator.
 
-    This is intentionally shallower than the reference object-tree ``MCTS``.
-    It expands/evaluates root actions in large tensor batches so we can produce
-    AlphaZero seed data quickly.
+    This is intentionally shallow and does not build a deep search tree. It is
+    kept only for old tests and throughput comparisons; production self-play
+    should use ``BatchedTreeMCTS``.
     """
 
     def __init__(

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Play Connect4 Zero</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="scene-wrap" aria-label="3D Connect Four board">
+        <canvas id="board-canvas"></canvas>
+        <div class="status-strip">
+          <strong id="status-text">Loading...</strong>
+          <span id="detail-text"></span>
+        </div>
+      </section>
+
+      <aside class="controls" aria-label="Game controls">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <h1>4x4x4 Connect Four</h1>
+            <p>Human vs MCTS</p>
+          </div>
+        </div>
+
+        <div class="panel-row">
+          <span>You</span>
+          <i class="dot human"></i>
+          <span>Bot</span>
+          <i class="dot bot"></i>
+        </div>
+
+        <div>
+          <h2>Choose a column</h2>
+          <div id="action-grid" class="action-grid"></div>
+        </div>
+
+        <button id="reset-button" type="button">Reset game</button>
+
+        <dl class="meta">
+          <div>
+            <dt>Last human</dt>
+            <dd id="last-human">-</dd>
+          </div>
+          <div>
+            <dt>Last bot</dt>
+            <dd id="last-bot">-</dd>
+          </div>
+          <div>
+            <dt>Moves</dt>
+            <dd id="move-count">0</dd>
+          </div>
+          <div>
+            <dt>Device</dt>
+            <dd id="device">-</dd>
+          </div>
+        </dl>
+
+        <p class="hint">Drag to rotate. Scroll to zoom. Click a base square or action button to move.</p>
+      </aside>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

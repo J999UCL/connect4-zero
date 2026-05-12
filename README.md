@@ -2,8 +2,10 @@
 
 AlphaZero-style reinforcement learning for gravity-based 4x4x4 Connect Four.
 
-The project is currently in Phase 1: a clean, vectorized PyTorch game engine.
-MCTS, neural network training, self-play, and remote GPU runs come later.
+The project currently has a clean, vectorized PyTorch game engine, a reference
+classical MCTS implementation, and a batched root/action search path for
+generating AlphaZero-style seed data. Neural network training and remote GPU
+experiment scripts come later.
 
 ## Local Setup
 
@@ -17,6 +19,34 @@ uv run pytest
 
 The local Mac setup is for correctness tests and small smoke checks. Heavy
 self-play and training runs should happen on the remote NVIDIA GPU machines.
+
+## Visual Docs
+
+A static visual walkthrough lives at:
+
+```text
+docs/site/index.html
+```
+
+Open that file in a browser to see the board model, engine tensors, object
+relationships, MCTS flow, value signs, and current test coverage.
+
+## Play Against MCTS
+
+Run the small local web app:
+
+```bash
+uv run python play_web/server.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8787
+```
+
+The app shows a rotatable 3D board and lets you play blue stones against the
+red MCTS bot.
 
 ## Game Rules
 
@@ -113,3 +143,66 @@ The current tests cover:
 - win/draw detection
 - mixed batched game behavior
 - cloning and device movement
+
+## MCTS
+
+The Phase 2 search code lives in `connect4_zero.search`.
+
+```python
+from connect4_zero.game import Connect4x4x4Batch
+from connect4_zero.search import MCTS, MCTSConfig
+
+game = Connect4x4x4Batch(batch_size=1)
+mcts = MCTS(MCTSConfig(num_simulations=100, rollout_batch_size=128))
+result = mcts.search(game)
+```
+
+`result.policy` is a length-16 visit-count policy suitable as an AlphaZero-style
+training target. Illegal actions have probability `0`.
+
+Value convention:
+
+- Node values are from the player-to-move perspective at that node.
+- Child values are negated when viewed from the parent.
+- A terminal child where the previous mover won has value `-1` from the child
+  perspective.
+
+The first `NodeStore` implementation is a plain tree. MCTS uses the store
+boundary so a future Zobrist-backed DAG can replace tree storage without
+rewriting selection, evaluation, or backpropagation.
+
+## Batched Data Generation
+
+Phase 2.5 adds a separate high-throughput search path for seed data:
+
+```python
+from connect4_zero.game import Connect4x4x4Batch
+from connect4_zero.search import BatchedRootActionConfig, BatchedRootActionMCTS
+
+roots = Connect4x4x4Batch(batch_size=1024)
+search = BatchedRootActionMCTS(
+    BatchedRootActionConfig(
+        num_selection_waves=8,
+        leaves_per_root=4,
+        rollouts_per_leaf=64,
+        rollout_device="cuda",
+    )
+)
+result = search.search_batch(roots)
+```
+
+This combines root parallelism and leaf/action parallelism:
+
+```text
+B roots x selected actions x random rollout continuations
+```
+
+The self-play data utilities live in `connect4_zero.data`. Generated samples are
+stored as safetensor shards plus a JSONL manifest:
+
+```text
+boards, policies, values, visit_counts, q_values, legal_masks, actions, plies
+```
+
+The neural network only needs `boards`, `policies`, and `values`; the extra
+search stats are kept for debugging, filtering, and analysis.

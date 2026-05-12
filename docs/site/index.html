@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect4 Zero Architecture</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="site-mark">
+        <span class="mark-grid" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </span>
+        <div>
+          <strong>Connect4 Zero</strong>
+          <small>Engine and MCTS architecture</small>
+        </div>
+      </div>
+      <nav class="top-nav" aria-label="Page sections">
+        <a href="#game">Game</a>
+        <a href="#engine">Engine</a>
+        <a href="#search">MCTS</a>
+        <a href="#uml">Objects</a>
+        <a href="#tests">Tests</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero-band">
+        <div class="hero-copy">
+          <p class="eyebrow">Phase 1 plus Phase 2</p>
+          <h1>Vectorized 4x4x4 Connect Four, with classical MCTS on top.</h1>
+          <p class="lead">
+            The project now has a PyTorch rules engine that can step many games
+            at once, plus a single-root MCTS that uses batched random rollouts
+            and keeps the storage boundary ready for a future Zobrist DAG.
+          </p>
+          <div class="facts-row" aria-label="Current implementation facts">
+            <span><strong>16</strong> gravity actions</span>
+            <span><strong>76</strong> winning lines</span>
+            <span><strong>32</strong> passing tests</span>
+            <span><strong>1</strong> skipped CUDA smoke test</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" aria-label="4x4x4 board preview">
+          <div class="cube-title">
+            <span>Canonical board preview</span>
+            <code>(B, 4, 4, 4)</code>
+          </div>
+          <div id="hero-board" class="board-stack"></div>
+          <div class="legend">
+            <span><i class="stone current"></i>current player = 1</span>
+            <span><i class="stone opponent"></i>opponent = -1</span>
+            <span><i class="stone empty"></i>empty = 0</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="game" class="content-band">
+        <div class="section-heading">
+          <p class="eyebrow">Game model</p>
+          <h2>Gravity actions on a 4-layer cube</h2>
+          <p>
+            A move chooses an <code>(x, y)</code> column. Gravity places the
+            piece at the next open <code>z</code> height, where <code>z=0</code>
+            is the bottom.
+          </p>
+        </div>
+
+        <div class="two-column">
+          <div class="explain-block">
+            <h3>Action mapping</h3>
+            <p>
+              The policy space is intentionally small: 16 column actions, not
+              64 cell placements. This matches the physical 4x4x4 Connect Four
+              rule variant and keeps MCTS and later policy heads simple.
+            </p>
+            <pre><code>action = 4 * x + y
+x = action // 4
+y = action % 4</code></pre>
+            <p id="action-readout" class="readout">
+              Action 5 selects column x=1, y=1.
+            </p>
+          </div>
+
+          <div class="action-panel">
+            <div class="panel-header">
+              <h3>16-column action grid</h3>
+              <span>hover or click an action</span>
+            </div>
+            <div id="action-grid" class="action-grid" aria-label="Action grid"></div>
+          </div>
+        </div>
+
+        <div class="line-summary">
+          <div>
+            <strong>48</strong>
+            <span>axis lines</span>
+          </div>
+          <div>
+            <strong>24</strong>
+            <span>face diagonals</span>
+          </div>
+          <div>
+            <strong>4</strong>
+            <span>space diagonals</span>
+          </div>
+          <div>
+            <strong>76</strong>
+            <span>total wins</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="engine" class="content-band alt-band">
+        <div class="section-heading">
+          <p class="eyebrow">Phase 1</p>
+          <h2>The vectorized game engine</h2>
+          <p>
+            <code>Connect4x4x4Batch</code> is the rule engine. It is not a
+            player or a training loop. It owns batched state tensors and knows
+            how to apply one move per game.
+          </p>
+        </div>
+
+        <div class="tensor-layout">
+          <div class="tensor-card">
+            <h3>board</h3>
+            <code>torch.int8, shape (B, 4, 4, 4)</code>
+            <div class="tensor-bars" aria-hidden="true">
+              <span style="--w: 100%">B games</span>
+              <span style="--w: 68%">x axis</span>
+              <span style="--w: 68%">y axis</span>
+              <span style="--w: 68%">z axis</span>
+            </div>
+            <p>
+              Values are <code>1</code>, <code>-1</code>, or <code>0</code>.
+              The board is always from the next player-to-move perspective.
+            </p>
+          </div>
+
+          <div class="tensor-card">
+            <h3>heights</h3>
+            <code>torch.int8, shape (B, 4, 4)</code>
+            <div class="height-map" aria-label="Height map example">
+              <span>0</span><span>1</span><span>0</span><span>3</span>
+              <span>2</span><span>4</span><span>1</span><span>0</span>
+              <span>0</span><span>0</span><span>3</span><span>1</span>
+              <span>4</span><span>2</span><span>1</span><span>0</span>
+            </div>
+            <p>
+              Each number is the next open <code>z</code>. A value of
+              <code>4</code> means the column is full and illegal.
+            </p>
+          </div>
+
+          <div class="tensor-card">
+            <h3>done and outcome</h3>
+            <code>done: bool (B,), outcome: int8 (B,)</code>
+            <div class="outcome-strip" aria-hidden="true">
+              <span class="live">live</span>
+              <span class="win">win</span>
+              <span class="draw">draw</span>
+              <span class="live">live</span>
+            </div>
+            <p>
+              <code>outcome=1</code> means the player who just moved won.
+              <code>outcome=0</code> means unfinished or draw.
+            </p>
+          </div>
+        </div>
+
+        <div class="method-flow">
+          <h3>What <code>step(actions)</code> does</h3>
+          <ol>
+            <li>Validate one action per game in the batch.</li>
+            <li>Convert each action to <code>x, y</code>.</li>
+            <li>Use <code>heights[b, x, y]</code> to find the landing <code>z</code>.</li>
+            <li>Place a <code>+1</code> stone for legal active games.</li>
+            <li>Check wins immediately, before perspective flips.</li>
+            <li>Check draws from full boards with no winning line.</li>
+            <li>Flip non-terminal boards with <code>board *= -1</code>.</li>
+          </ol>
+        </div>
+
+        <div class="method-grid">
+          <article>
+            <h3><code>legal_mask()</code></h3>
+            <p>Returns a <code>(B, 16)</code> boolean mask. Full columns and completed games are false.</p>
+          </article>
+          <article>
+            <h3><code>check_wins()</code></h3>
+            <p>Gathers the 76 static lines, sums each length-4 line, and detects sums of <code>4</code> or <code>-4</code>.</p>
+          </article>
+          <article>
+            <h3><code>is_draw()</code></h3>
+            <p>Requires every column to be full and neither player to have a winning line.</p>
+          </article>
+          <article>
+            <h3><code>clone()</code></h3>
+            <p>Makes a deep state copy, which is what search uses when expanding hypothetical moves.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="search" class="content-band">
+        <div class="section-heading">
+          <p class="eyebrow">Phase 2</p>
+          <h2>Single-root MCTS with batched random rollouts</h2>
+          <p>
+            MCTS searches one root state at a time. Tree traversal is simple
+            and debuggable; leaf evaluation is batched so it already resembles
+            the future GPU workflow.
+          </p>
+        </div>
+
+        <div class="search-stage">
+          <div class="stage-controls" role="tablist" aria-label="MCTS stages">
+            <button class="stage-button active" data-stage="select" type="button">Select</button>
+            <button class="stage-button" data-stage="expand" type="button">Expand</button>
+            <button class="stage-button" data-stage="evaluate" type="button">Evaluate</button>
+            <button class="stage-button" data-stage="backprop" type="button">Backprop</button>
+            <button class="stage-button" data-stage="policy" type="button">Policy</button>
+          </div>
+
+          <div class="stage-visual">
+            <div class="tree-svg-wrap" aria-label="MCTS tree diagram">
+              <svg id="tree-svg" viewBox="0 0 720 360" role="img" aria-labelledby="tree-title">
+                <title id="tree-title">MCTS search tree flow</title>
+                <defs>
+                  <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L7,3 z"></path>
+                  </marker>
+                </defs>
+                <path class="edge edge-select" d="M360 64 C300 120, 250 146, 190 198"></path>
+                <path class="edge edge-select" d="M360 64 C395 118, 448 145, 500 198"></path>
+                <path class="edge edge-expand" d="M500 198 C545 238, 575 263, 615 314"></path>
+                <path class="edge edge-backprop" d="M615 314 C560 265, 525 238, 500 198"></path>
+                <path class="edge edge-backprop" d="M500 198 C455 140, 410 100, 360 64"></path>
+
+                <g class="node node-root" transform="translate(360 64)">
+                  <circle r="34"></circle>
+                  <text y="-4">root</text>
+                  <text y="13">N=64</text>
+                </g>
+                <g class="node" transform="translate(190 198)">
+                  <circle r="30"></circle>
+                  <text y="-4">a=0</text>
+                  <text y="13">Q=1.0</text>
+                </g>
+                <g class="node node-focus" transform="translate(500 198)">
+                  <circle r="30"></circle>
+                  <text y="-4">a=5</text>
+                  <text y="13">UCB</text>
+                </g>
+                <g class="node node-leaf" transform="translate(615 314)">
+                  <circle r="30"></circle>
+                  <text y="-4">leaf</text>
+                  <text y="13">v</text>
+                </g>
+              </svg>
+            </div>
+            <div id="stage-copy" class="stage-copy"></div>
+          </div>
+        </div>
+
+        <div class="formula-band">
+          <div>
+            <h3>Selection score</h3>
+            <pre><code>score = -child.mean_value
+      + c * sqrt(log(parent.visits + 1) / child.visits)</code></pre>
+            <p>
+              The minus sign is deliberate: child values are from the child
+              player-to-move perspective, which is the opponent of the parent.
+            </p>
+          </div>
+          <div>
+            <h3>Backpropagation</h3>
+            <pre><code>for node in reversed(path):
+    node.visits += 1
+    node.value_sum += value
+    value = -value</code></pre>
+            <p>
+              Every edge crosses to the other player, so the value flips sign
+              at every step back to the root.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="uml" class="content-band alt-band">
+        <div class="section-heading">
+          <p class="eyebrow">Objects and modules</p>
+          <h2>How the pieces fit together</h2>
+          <p>
+            The package keeps rules, search, storage, and evaluation separate.
+            That is why the later Zobrist DAG and neural-network evaluator can
+            arrive as replacements instead of rewrites.
+          </p>
+        </div>
+
+        <div class="uml-grid">
+          <article class="uml-box engine-box">
+            <h3>Connect4x4x4Batch</h3>
+            <p>Owns batched board state and applies legal gravity moves.</p>
+            <ul>
+              <li><code>board</code>, <code>heights</code>, <code>done</code>, <code>outcome</code></li>
+              <li><code>step(actions)</code></li>
+              <li><code>legal_mask()</code></li>
+              <li><code>check_wins()</code></li>
+              <li><code>clone()</code></li>
+            </ul>
+          </article>
+
+          <article class="uml-box search-box">
+            <h3>MCTS</h3>
+            <p>Coordinates selection, expansion, evaluation, and backprop.</p>
+            <ul>
+              <li><code>search(root)</code></li>
+              <li><code>_select_and_expand()</code></li>
+              <li><code>_ucb_score()</code></li>
+              <li><code>_backpropagate()</code></li>
+              <li><code>_build_result()</code></li>
+            </ul>
+          </article>
+
+          <article class="uml-box node-box">
+            <h3>NodeStore</h3>
+            <p>Abstracts how search nodes are created and linked.</p>
+            <ul>
+              <li><code>create_root(state)</code></li>
+              <li><code>get_or_create_child(...)</code></li>
+              <li><code>TreeNodeStore</code> now</li>
+              <li><code>ZobristNodeStore</code> later</li>
+            </ul>
+          </article>
+
+          <article class="uml-box rollout-box">
+            <h3>RandomRolloutEvaluator</h3>
+            <p>Replicates a leaf state and plays random games to termination.</p>
+            <ul>
+              <li><code>evaluate(state)</code></li>
+              <li>batched random actions</li>
+              <li>CPU, MPS, or CUDA device</li>
+              <li>mean value in <code>[-1, 1]</code></li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="dependency-map" aria-label="Dependency map">
+          <div class="dep-node">MCTS</div>
+          <div class="dep-line"></div>
+          <div class="dep-node">NodeStore</div>
+          <div class="dep-line"></div>
+          <div class="dep-node">SearchNode</div>
+          <div class="dep-node wide">Connect4x4x4Batch clone</div>
+          <div class="dep-line"></div>
+          <div class="dep-node">RolloutEvaluator</div>
+          <div class="dep-line"></div>
+          <div class="dep-node">SearchResult</div>
+        </div>
+      </section>
+
+      <section class="content-band">
+        <div class="section-heading">
+          <p class="eyebrow">Value semantics</p>
+          <h2>The sign convention that keeps search sane</h2>
+          <p>
+            This is the single most important mental model for AlphaZero-style
+            code in this repo.
+          </p>
+        </div>
+
+        <div class="value-diagram">
+          <div class="perspective-card">
+            <h3>Engine step result</h3>
+            <p><code>outcome = 1</code> means the player who just moved won.</p>
+            <p>It does not mean the next player-to-move is winning.</p>
+          </div>
+          <div class="sign-arrow">value flips</div>
+          <div class="perspective-card">
+            <h3>MCTS node value</h3>
+            <p>A node value is always from that node's player-to-move perspective.</p>
+            <p>A winning terminal child is <code>-1</code> for the child player.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="tests" class="content-band alt-band">
+        <div class="section-heading">
+          <p class="eyebrow">Verification</p>
+          <h2>What the tests prove right now</h2>
+          <p>
+            The suite is intentionally behavioral. It checks the facts that
+            MCTS and future training depend on.
+          </p>
+        </div>
+
+        <div class="test-grid">
+          <article>
+            <strong>Game geometry</strong>
+            <span>actions, 76 win lines, symmetry permutations</span>
+          </article>
+          <article>
+            <strong>Engine rules</strong>
+            <span>gravity, legal masks, wins, draws, canonical flips</span>
+          </article>
+          <article>
+            <strong>MCTS behavior</strong>
+            <span>non-mutation, policy shapes, illegal moves, immediate wins</span>
+          </article>
+          <article>
+            <strong>Value signs</strong>
+            <span>fake evaluator tests prove backprop sign flips</span>
+          </article>
+          <article>
+            <strong>Rollouts</strong>
+            <span>batched random play, terminal values, CPU/MPS smoke tests</span>
+          </article>
+        </div>
+
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span></span><span></span><span></span>
+            <code>uv run pytest</code>
+          </div>
+          <pre><code>32 passed, 1 skipped
+CUDA smoke skipped locally because CUDA is unavailable
+MPS smoke test passed</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Static docs for the current local implementation.</span>
+      <span>No training jobs, remote syncs, or experiment runs are represented here.</span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -110,6 +110,24 @@ class SearchTree:
         self.max_depth = max(self.max_depth, child.depth)
         return child
 
+    def reuse_child(self, action: int) -> Optional["SearchTree"]:
+        """Return a new tree rooted at the existing child for ``action``."""
+        if action < 0 or action >= ACTION_SIZE:
+            return None
+
+        child = self.root.children[action]
+        if child is None:
+            return None
+        return self.from_existing_root(child)
+
+    @classmethod
+    def from_existing_root(cls, root: TreeNode) -> "SearchTree":
+        """Detach ``root`` from its parent and rebase subtree depths."""
+        root.parent = None
+        root.parent_action = None
+        num_nodes, max_depth = _rebase_and_count(root, depth=0)
+        return cls(root=root, num_nodes=num_nodes, max_depth=max_depth)
+
 
 def legal_actions_for_state(state: Connect4x4x4Batch) -> Tuple[int, ...]:
     """Return legal action indices for a single-state batch."""
@@ -142,3 +160,17 @@ def terminal_value_for_child(result: StepResult) -> Optional[float]:
 def _validate_single_state(state: Connect4x4x4Batch) -> None:
     if state.batch_size != 1:
         raise ValueError(f"tree nodes require batch_size=1, got {state.batch_size}")
+
+
+def _rebase_and_count(node: TreeNode, depth: int) -> Tuple[int, int]:
+    node.depth = depth
+    num_nodes = 1
+    max_depth = depth
+    for child in node.children:
+        if child is None:
+            continue
+        child.parent = node
+        child_count, child_max_depth = _rebase_and_count(child, depth=depth + 1)
+        num_nodes += child_count
+        max_depth = max(max_depth, child_max_depth)
+    return num_nodes, max_depth

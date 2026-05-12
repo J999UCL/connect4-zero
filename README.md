@@ -184,6 +184,10 @@ Many selected leaves are held with virtual loss, evaluated together by
 `BatchedRandomRolloutEvaluator`, then backpropagated through their full paths.
 The explicit Python tree runs on CPU; `rollout_device="cuda"` sends only the
 packed leaf rollout batches to the GPU.
+During self-play, when the sampled action already exists in the searched root,
+the child subtree is reused as the next ply's root. That preserves visits,
+values, and expanded descendants instead of rebuilding from zero after every
+real move.
 The old single-root MCTS and shallow root/action evaluator are kept under
 `connect4_zero.search.deprecated` for reference only.
 

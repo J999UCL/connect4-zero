@@ -123,6 +123,54 @@ def test_search_batch_returns_deep_policy_statistics_for_many_roots() -> None:
     assert max(evaluator.batch_sizes) <= 8
 
 
+def test_search_can_reuse_child_subtree_as_next_root() -> None:
+    root = Connect4x4x4Batch(batch_size=1)
+    evaluator = RecordingEvaluator(value=0.0)
+    search = BatchedTreeMCTS(
+        TreeMCTSConfig(
+            simulations_per_root=20,
+            max_leaf_batch_size=16,
+            rollouts_per_leaf=1,
+        ),
+        evaluator=evaluator,
+    )
+
+    result = search.search_batch(root)
+    action = int(result.policy[0].argmax().item())
+    reused = search.advance_tree(search.last_trees[0], action)
+    assert reused is not None
+    assert reused.root.parent is None
+    assert reused.root.parent_action is None
+    previous_root_visits = reused.root.visits
+
+    next_root = root.clone()
+    next_root.step(torch.tensor([action], dtype=torch.long))
+    search.search_batch_with_trees(next_root, [reused])
+
+    assert search.last_reused_roots == 1
+    assert search.last_fresh_roots == 0
+    assert search.last_trees[0].root is reused.root
+    assert search.last_trees[0].root.visits == previous_root_visits + 20
+
+
+def test_mismatched_reusable_tree_falls_back_to_fresh_root() -> None:
+    first_root = Connect4x4x4Batch(batch_size=1)
+    second_root = Connect4x4x4Batch(batch_size=1)
+    second_root.step(torch.tensor([0], dtype=torch.long))
+    search = BatchedTreeMCTS(
+        TreeMCTSConfig(simulations_per_root=2, max_leaf_batch_size=4, rollouts_per_leaf=1),
+        evaluator=RecordingEvaluator(),
+    )
+
+    search.search_batch(first_root)
+    stale_tree = search.last_trees[0]
+    search.search_batch_with_trees(second_root, [stale_tree])
+
+    assert search.last_reused_roots == 0
+    assert search.last_fresh_roots == 1
+    assert search.last_trees[0] is not stale_tree
+
+
 def test_search_builds_nodes_deeper_than_root_children() -> None:
     evaluator = RecordingEvaluator(value=0.0)
     search = BatchedTreeMCTS(

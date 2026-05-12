@@ -29,6 +29,26 @@ class ScriptedSearch:
         )
 
 
+class ReusableScriptedSearch(ScriptedSearch):
+    def __init__(self, actions: list[int]) -> None:
+        super().__init__(actions)
+        self.root_tree_batches: list[list[object | None]] = []
+        self.last_trees: list[object] = []
+        self.last_reused_roots = 0
+        self.last_fresh_roots = 0
+
+    def search_batch_with_trees(self, roots, root_trees) -> BatchedSearchResult:
+        self.root_tree_batches.append(list(root_trees))
+        self.last_reused_roots = sum(tree is not None for tree in root_trees)
+        self.last_fresh_roots = sum(tree is None for tree in root_trees)
+        result = self.search_batch(roots)
+        self.last_trees = [object() for _ in range(roots.batch_size)]
+        return result
+
+    def advance_tree(self, tree, action: int):
+        return (tree, action)
+
+
 def test_self_play_generator_assigns_final_values_by_position_player() -> None:
     search = ScriptedSearch([0, 4, 1, 5, 2, 6, 3])
     generator = SelfPlayGenerator(
@@ -43,6 +63,20 @@ def test_self_play_generator_assigns_final_values_by_position_player() -> None:
     assert samples.values.tolist() == [1, -1, 1, -1, 1, -1, 1]
     assert samples.policies.shape == (7, ACTION_SIZE)
     assert torch.allclose(samples.policies.sum(dim=1), torch.ones(7))
+
+
+def test_self_play_generator_reuses_search_trees_between_plies() -> None:
+    search = ReusableScriptedSearch([0, 4, 1, 5, 2, 6, 3])
+    generator = SelfPlayGenerator(
+        search=search,  # type: ignore[arg-type]
+        config=SelfPlayConfig(batch_size=1, action_temperature=0, max_plies=8),
+    )
+
+    samples = generator.generate(num_games=1)
+
+    assert samples.num_samples == 7
+    assert search.root_tree_batches[0] == [None]
+    assert all(batch[0] is not None for batch in search.root_tree_batches[1:])
 
 
 def test_shard_writer_and_dataset_round_trip_with_symmetry(tmp_path) -> None:

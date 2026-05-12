@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Protocol
+from typing import List, Optional, Protocol, Sequence
 
 import torch
 
@@ -55,11 +55,21 @@ class BatchedTreeMCTS:
         self.last_leaf_evaluations = 0
         self.last_terminal_evaluations = 0
         self.last_leaf_batch_sizes: List[int] = []
+        self.last_reused_roots = 0
+        self.last_fresh_roots = 0
 
     def search_batch(self, roots: Connect4x4x4Batch) -> BatchedSearchResult:
         """Search a batch of roots without mutating the caller's states."""
+        return self.search_batch_with_trees(roots, root_trees=None)
+
+    def search_batch_with_trees(
+        self,
+        roots: Connect4x4x4Batch,
+        root_trees: Optional[Sequence[Optional[SearchTree]]] = None,
+    ) -> BatchedSearchResult:
+        """Search roots, reusing matching trees when supplied."""
         search_roots = self._prepare_roots(roots)
-        trees = [SearchTree.from_state(self._slice_state(search_roots, index)) for index in range(search_roots.batch_size)]
+        trees = self._prepare_trees(search_roots, root_trees)
         self._reset_diagnostics(trees)
 
         remaining = [
@@ -100,6 +110,10 @@ class BatchedTreeMCTS:
 
         return self._build_result(trees, device=search_roots.device)
 
+    def advance_tree(self, tree: SearchTree, action: int) -> Optional[SearchTree]:
+        """Reuse the searched child tree after ``action`` is played."""
+        return tree.reuse_child(int(action))
+
     def _prepare_roots(self, roots: Connect4x4x4Batch) -> Connect4x4x4Batch:
         if self.config.rollout_device is None:
             return roots.clone()
@@ -116,6 +130,44 @@ class BatchedTreeMCTS:
         state.done = roots.done[index : index + 1].clone()
         state.outcome = roots.outcome[index : index + 1].clone()
         return state
+
+    def _prepare_trees(
+        self,
+        roots: Connect4x4x4Batch,
+        root_trees: Optional[Sequence[Optional[SearchTree]]],
+    ) -> List[SearchTree]:
+        if root_trees is not None and len(root_trees) != roots.batch_size:
+            raise ValueError(
+                f"root_trees must have length {roots.batch_size}, got {len(root_trees)}"
+            )
+
+        trees: List[SearchTree] = []
+        reused = 0
+        fresh = 0
+        for index in range(roots.batch_size):
+            root_state = self._slice_state(roots, index)
+            candidate = root_trees[index] if root_trees is not None else None
+            if candidate is not None and self._tree_matches_state(candidate, root_state):
+                trees.append(candidate)
+                reused += 1
+            else:
+                trees.append(SearchTree.from_state(root_state))
+                fresh += 1
+
+        self.last_reused_roots = reused
+        self.last_fresh_roots = fresh
+        return trees
+
+    def _tree_matches_state(self, tree: SearchTree, state: Connect4x4x4Batch) -> bool:
+        root = tree.root.state
+        if root.device != state.device:
+            return False
+        return (
+            torch.equal(root.board, state.board)
+            and torch.equal(root.heights, state.heights)
+            and torch.equal(root.done, state.done)
+            and torch.equal(root.outcome, state.outcome)
+        )
 
     def _select_path(self, tree_index: int, tree: SearchTree) -> SelectedPath:
         node = tree.root

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 
@@ -117,6 +117,7 @@ class SelfPlayGenerator:
         plies: List[torch.Tensor] = []
         record_games: List[torch.Tensor] = []
         record_players: List[torch.Tensor] = []
+        trees_by_game: Optional[List[Any]] = [None for _ in range(batch_games)] if self._supports_tree_reuse() else None
 
         for ply in range(self.config.max_plies):
             active = ~game.done
@@ -136,6 +137,7 @@ class SelfPlayGenerator:
 
             active_indices = active.nonzero(as_tuple=False).flatten()
             roots = self._index_batch(game, active_indices)
+            root_trees = self._active_trees(trees_by_game, active_indices)
             active_count = int(active_indices.numel())
             self._emit(
                 progress_callback,
@@ -146,7 +148,7 @@ class SelfPlayGenerator:
                     "finished_games": batch_games - active_count,
                 },
             )
-            result = self.search.search_batch(roots)
+            result = self._search_roots(roots, root_trees)
             self._emit(
                 progress_callback,
                 "ply_search_end",
@@ -160,6 +162,8 @@ class SelfPlayGenerator:
                     "terminal_evaluations": int(getattr(self.search, "last_terminal_evaluations", -1)),
                     "leaf_batches": len(getattr(self.search, "last_leaf_batch_sizes", [])),
                     "max_leaf_batch": self._max_search_leaf_batch(),
+                    "tree_reuse_hits": int(getattr(self.search, "last_reused_roots", -1)),
+                    "tree_fresh_roots": int(getattr(self.search, "last_fresh_roots", -1)),
                 },
             )
             root_legal_mask = roots.legal_mask()
@@ -189,6 +193,12 @@ class SelfPlayGenerator:
                 winner_by_game[active_indices[active_draw]] = 0
 
             still_playing = ~active_done
+            self._advance_trees(
+                trees_by_game=trees_by_game,
+                active_indices=active_indices,
+                chosen_actions=chosen_actions,
+                active_done=active_done,
+            )
             if bool(still_playing.any().item()):
                 player_to_move[active_indices[still_playing]] *= OPPONENT_PLAYER
             self._emit(
@@ -303,6 +313,55 @@ class SelfPlayGenerator:
         selected.done = batch.done[indices].clone()
         selected.outcome = batch.outcome[indices].clone()
         return selected
+
+    def _supports_tree_reuse(self) -> bool:
+        return hasattr(self.search, "search_batch_with_trees") and hasattr(self.search, "advance_tree")
+
+    def _active_trees(
+        self,
+        trees_by_game: Optional[List[Any]],
+        active_indices: torch.Tensor,
+    ) -> Optional[List[Any]]:
+        if trees_by_game is None:
+            return None
+        return [trees_by_game[int(index)] for index in active_indices.detach().cpu().tolist()]
+
+    def _search_roots(
+        self,
+        roots: Connect4x4x4Batch,
+        root_trees: Optional[List[Any]],
+    ) -> BatchedSearchResult:
+        search_with_trees = getattr(self.search, "search_batch_with_trees", None)
+        if root_trees is not None and search_with_trees is not None:
+            return search_with_trees(roots, root_trees)
+        return self.search.search_batch(roots)
+
+    def _advance_trees(
+        self,
+        trees_by_game: Optional[List[Any]],
+        active_indices: torch.Tensor,
+        chosen_actions: torch.Tensor,
+        active_done: torch.Tensor,
+    ) -> None:
+        if trees_by_game is None:
+            return
+
+        advance_tree = getattr(self.search, "advance_tree", None)
+        searched_trees = getattr(self.search, "last_trees", [])
+        if advance_tree is None or len(searched_trees) == 0:
+            return
+
+        game_indices = active_indices.detach().cpu().tolist()
+        actions = chosen_actions.detach().cpu().tolist()
+        done_flags = active_done.detach().cpu().tolist()
+        for local_index, game_index in enumerate(game_indices):
+            if bool(done_flags[local_index]) or local_index >= len(searched_trees):
+                trees_by_game[int(game_index)] = None
+                continue
+            trees_by_game[int(game_index)] = advance_tree(
+                searched_trees[local_index],
+                int(actions[local_index]),
+            )
 
     def _generator_for(self, device: torch.device) -> Optional[torch.Generator]:
         if self.config.seed is None:

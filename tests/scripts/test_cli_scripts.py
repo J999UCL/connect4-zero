@@ -1,5 +1,7 @@
+import json
 from pathlib import Path
 
+from connect4_zero.data import SelfPlayDataset
 from connect4_zero.scripts.benchmark_search import main as benchmark_main
 from connect4_zero.scripts.benchmark_puct import main as benchmark_puct_main
 from connect4_zero.scripts.generate_selfplay import main as generate_main
@@ -141,6 +143,52 @@ def test_generate_selfplay_cli_accepts_puct_backend(tmp_path: Path) -> None:
     assert exit_code == 0
     assert (output_dir / "manifest.jsonl").exists()
     assert list((output_dir / "shards").glob("*.safetensors"))
+
+
+def test_generate_selfplay_cli_multiprocess_merges_worker_manifests(tmp_path: Path) -> None:
+    output_dir = tmp_path / "selfplay_mp"
+
+    exit_code = generate_main(
+        [
+            "--games",
+            "2",
+            "--out",
+            str(output_dir),
+            "--device",
+            "cpu",
+            "--batch-size",
+            "1",
+            "--games-per-write",
+            "1",
+            "--samples-per-shard",
+            "128",
+            "--simulations-per-root",
+            "1",
+            "--max-leaf-batch-size",
+            "2",
+            "--rollouts-per-leaf",
+            "1",
+            "--max-rollouts-per-chunk",
+            "128",
+            "--num-workers",
+            "2",
+            "--worker-start-method",
+            "fork",
+            "--seed",
+            "11",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    manifest_path = output_dir / "manifest.jsonl"
+    assert manifest_path.exists()
+    records = [json.loads(line) for line in manifest_path.read_text().splitlines()]
+    assert len(records) == 2
+    assert all(record["shard"].startswith("workers/worker-") for record in records)
+    assert list((output_dir / "workers").glob("worker-*/logs/generate_selfplay_worker_*.log"))
+    dataset = SelfPlayDataset(manifest_path)
+    assert len(dataset) == sum(record["num_samples"] for record in records)
 
 
 def test_train_resnet_cli_dry_run(tmp_path: Path) -> None:

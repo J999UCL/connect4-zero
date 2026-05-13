@@ -9,14 +9,17 @@ description = "AlphaZero-style reinforcement learning for gravity-based 4x4x4 Co
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "numpy>=1.26",
+  "onnx>=1.16",
   "safetensors>=0.4",
   "torch>=2.0",
+  "zstandard>=0.22",
 ]
 
 [project.scripts]
 connect4-benchmark-search = "connect4_zero.scripts.benchmark_search:main"
 connect4-benchmark-puct = "connect4_zero.scripts.benchmark_puct:main"
 connect4-arena-eval = "connect4_zero.scripts.arena_eval:main"
+connect4-export-onnx = "connect4_zero.scripts.export_onnx:main"
 connect4-generate-selfplay = "connect4_zero.scripts.generate_selfplay:main"
 connect4-play-terminal = "connect4_zero.scripts.play_terminal:main"
 connect4-run-training-loop = "connect4_zero.scripts.run_training_loop:main"

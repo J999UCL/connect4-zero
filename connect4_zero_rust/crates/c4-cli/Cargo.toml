@@ -1,0 +1,34 @@
+[package]
+name = "c4-cli"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+default = ["onnx"]
+onnx = []
+
+[dependencies]
+anyhow.workspace = true
+c4-arena.workspace = true
+c4-core.workspace = true
+c4-data.workspace = true
+c4-infer = { workspace = true, features = ["onnx"] }
+c4-search.workspace = true
+clap.workspace = true
+rand.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "c4-selfplay"
+path = "src/bin/selfplay.rs"
+
+[[bin]]
+name = "c4-arena"
+path = "src/bin/arena.rs"
+
+[[bin]]
+name = "c4-inspect"
+path = "src/bin/inspect.rs"

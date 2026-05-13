@@ -1,0 +1,10 @@
+[package]
+name = "c4-arena"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+c4-search.workspace = true
+serde.workspace = true

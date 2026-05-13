@@ -10,6 +10,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+target/
 
 # OS/editor noise
 .DS_Store

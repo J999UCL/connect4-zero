@@ -2,9 +2,12 @@ import json
 from pathlib import Path
 
 from connect4_zero.data import SelfPlayDataset
+from connect4_zero.model import Connect4ResNet3D, save_checkpoint
+from connect4_zero.scripts.arena_eval import main as arena_eval_main
 from connect4_zero.scripts.benchmark_search import main as benchmark_main
 from connect4_zero.scripts.benchmark_puct import main as benchmark_puct_main
 from connect4_zero.scripts.generate_selfplay import main as generate_main
+from connect4_zero.scripts.run_training_loop import main as run_training_loop_main
 from connect4_zero.scripts.train_resnet import main as train_resnet_main
 
 
@@ -255,3 +258,76 @@ def test_train_resnet_cli_dry_run(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert list((tmp_path / "train" / "logs").glob("train_resnet-*.log"))
+
+
+def test_arena_eval_cli_writes_summary(tmp_path: Path) -> None:
+    candidate = tmp_path / "candidate.pt"
+    baseline = tmp_path / "baseline.pt"
+    save_checkpoint(candidate, Connect4ResNet3D())
+    save_checkpoint(baseline, Connect4ResNet3D())
+
+    exit_code = arena_eval_main(
+        [
+            "--candidate-checkpoint",
+            str(candidate),
+            "--baseline-checkpoint",
+            str(baseline),
+            "--games",
+            "2",
+            "--batch-size",
+            "2",
+            "--device",
+            "cpu",
+            "--simulations-per-root",
+            "1",
+            "--max-leaf-batch-size",
+            "1",
+            "--inference-batch-size",
+            "4",
+            "--out",
+            str(tmp_path / "arena"),
+            "--quiet",
+        ]
+    )
+
+    summary_path = tmp_path / "arena" / "arena-summary.json"
+    summary = json.loads(summary_path.read_text())
+    assert exit_code == 0
+    assert summary["games"] == 2
+    assert summary["candidate_wins"] + summary["baseline_wins"] + summary["draws"] == 2
+    assert list((tmp_path / "arena" / "logs").glob("arena_eval-*.log"))
+
+
+def test_run_training_loop_dry_run_writes_plan(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "checkpoint.pt"
+    save_checkpoint(checkpoint, Connect4ResNet3D())
+
+    exit_code = run_training_loop_main(
+        [
+            "--initial-checkpoint",
+            str(checkpoint),
+            "--run-root",
+            str(tmp_path / "runs"),
+            "--data-root",
+            str(tmp_path / "data"),
+            "--run-prefix",
+            "dry",
+            "--rounds",
+            "2",
+            "--device",
+            "cpu",
+            "--games-per-round",
+            "2",
+            "--arena-games",
+            "2",
+            "--dry-run",
+            "--quiet",
+        ]
+    )
+
+    plan_path = tmp_path / "runs" / "dry" / "loop-plan.json"
+    plan = json.loads(plan_path.read_text())
+    assert exit_code == 0
+    assert plan["run_id"] == "dry"
+    assert len(plan["rounds"]) == 2
+    assert list((tmp_path / "runs" / "dry" / "logs").glob("run_training_loop-*.log"))

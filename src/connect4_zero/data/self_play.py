@@ -170,7 +170,7 @@ class SelfPlayGenerator:
                     "timing_prepare": self._search_timing("prepare_trees"),
                     "timing_select": self._search_timing("select"),
                     "timing_expand": self._search_timing("expand"),
-                    "timing_rollout": self._search_timing("rollout_eval"),
+                    "timing_rollout": self._search_timing("rollout_eval", fallback_key="leaf_eval"),
                     "timing_backprop": self._search_timing("backprop"),
                     "timing_build": self._search_timing("build_result"),
                 },
@@ -407,6 +407,10 @@ class SelfPlayGenerator:
         batch_sizes = getattr(self.search, "last_expansion_batch_sizes", [])
         return int(max(batch_sizes)) if batch_sizes else 0
 
-    def _search_timing(self, key: str) -> float:
+    def _search_timing(self, key: str, fallback_key: str | None = None) -> float:
         timings = getattr(self.search, "last_timing_seconds", {})
-        return float(timings.get(key, -1.0))
+        if key in timings:
+            return float(timings[key])
+        if fallback_key is not None and fallback_key in timings:
+            return float(timings[fallback_key])
+        return -1.0

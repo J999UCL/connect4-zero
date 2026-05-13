@@ -12,6 +12,7 @@ from typing import Any
 import torch
 
 from connect4_zero.data import SelfPlayConfig, SelfPlayDataset, SelfPlayGenerator, SelfPlayShardWriter
+from connect4_zero.model import Connect4ResNet3D, ResNet3DConfig, load_checkpoint
 from connect4_zero.scripts._common import (
     SelfPlayProgressLogger,
     configure_logging,
@@ -28,7 +29,7 @@ from connect4_zero.scripts._common import (
     sync_if_cuda,
     timestamp_slug,
 )
-from connect4_zero.search import BatchedTreeMCTS, TreeMCTSConfig
+from connect4_zero.search import BatchedPUCTMCTS, BatchedTreeMCTS, NeuralPolicyValueEvaluator, PUCTMCTSConfig, TreeMCTSConfig
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,12 +43,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=128, help="Parallel games per self-play batch.")
     parser.add_argument("--games-per-write", type=int, default=512, help="Complete games generated before each write.")
     parser.add_argument("--samples-per-shard", type=int, default=16384, help="Samples per safetensor shard.")
+    parser.add_argument("--backend", choices=("rollout", "puct"), default="rollout", help="Search backend.")
     parser.add_argument("--simulations-per-root", type=int, default=128, help="Full MCTS simulations per root.")
     parser.add_argument("--max-leaf-batch-size", type=int, default=4096, help="Selected leaves evaluated per rollout batch.")
     parser.add_argument("--rollouts-per-leaf", type=int, default=32, help="Random continuations per evaluated leaf.")
     parser.add_argument("--max-rollouts-per-chunk", type=int, default=262144, help="Largest rollout batch inside evaluator.")
     parser.add_argument("--exploration-constant", type=float, default=1.4, help="UCB exploration constant.")
     parser.add_argument("--virtual-loss", type=float, default=1.0, help="Virtual loss used while collecting leaf batches.")
+    parser.add_argument("--c-puct", type=float, default=1.5, help="PUCT exploration constant for neural search.")
+    parser.add_argument("--puct-inference-batch-size", type=int, default=4096, help="Model inference chunk size for PUCT.")
+    parser.add_argument("--checkpoint", type=Path, default=None, help="Optional ResNet checkpoint for PUCT search.")
+    parser.add_argument("--add-root-noise", action="store_true", help="Add AlphaZero Dirichlet root noise for PUCT self-play.")
+    parser.add_argument("--root-dirichlet-alpha", type=float, default=0.3, help="PUCT root Dirichlet alpha.")
+    parser.add_argument("--root-exploration-fraction", type=float, default=0.25, help="PUCT root noise mixture fraction.")
     parser.add_argument("--policy-temperature", type=float, default=1.0, help="Visit-count policy temperature.")
     parser.add_argument("--action-temperature", type=float, default=1.0, help="Self-play action sampling temperature.")
     parser.add_argument("--max-plies", type=int, default=64, help="Safety cap for plies per game.")
@@ -75,21 +83,11 @@ def main(argv: list[str] | None = None) -> int:
     log_environment(logger, device)
     log_config(logger, "self-play generation config", vars(args))
     tree_device = torch.device("cpu") if device.type in ("cuda", "mps") else device
+    logger.info("search.backend=%s", args.backend)
     logger.info("search.tree_device=%s", tree_device)
-    logger.info("search.rollout_device=%s", device)
+    logger.info("search.evaluator_device=%s", device)
 
-    search_config = TreeMCTSConfig(
-        simulations_per_root=args.simulations_per_root,
-        max_leaf_batch_size=args.max_leaf_batch_size,
-        rollouts_per_leaf=args.rollouts_per_leaf,
-        exploration_constant=args.exploration_constant,
-        virtual_loss=args.virtual_loss,
-        policy_temperature=args.policy_temperature,
-        rollout_device=device,
-        seed=args.seed,
-        max_rollout_steps=args.max_plies,
-        max_rollouts_per_chunk=args.max_rollouts_per_chunk,
-    )
+    search = _build_search(args, device)
     self_play_config = SelfPlayConfig(
         batch_size=args.batch_size,
         device=tree_device,
@@ -97,7 +95,6 @@ def main(argv: list[str] | None = None) -> int:
         max_plies=args.max_plies,
         seed=args.seed,
     )
-    search = BatchedTreeMCTS(search_config)
     generator = SelfPlayGenerator(search=search, config=self_play_config)
     writer = SelfPlayShardWriter(
         output_dir=args.out,
@@ -180,8 +177,56 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--max-leaf-batch-size must be positive")
     if args.rollouts_per_leaf <= 0:
         raise ValueError("--rollouts-per-leaf must be positive")
+    if args.puct_inference_batch_size <= 0:
+        raise ValueError("--puct-inference-batch-size must be positive")
     if args.force and args.append:
         raise ValueError("--force and --append are mutually exclusive")
+
+
+def _build_search(args: argparse.Namespace, device: torch.device):
+    if args.backend == "rollout":
+        search_config = TreeMCTSConfig(
+            simulations_per_root=args.simulations_per_root,
+            max_leaf_batch_size=args.max_leaf_batch_size,
+            rollouts_per_leaf=args.rollouts_per_leaf,
+            exploration_constant=args.exploration_constant,
+            virtual_loss=args.virtual_loss,
+            policy_temperature=args.policy_temperature,
+            rollout_device=device,
+            seed=args.seed,
+            max_rollout_steps=args.max_plies,
+            max_rollouts_per_chunk=args.max_rollouts_per_chunk,
+        )
+        return BatchedTreeMCTS(search_config)
+
+    model = _load_or_create_model(args.checkpoint, device)
+    evaluator = NeuralPolicyValueEvaluator(
+        model=model,
+        device=device,
+        inference_batch_size=args.puct_inference_batch_size,
+    )
+    search_config = PUCTMCTSConfig(
+        simulations_per_root=args.simulations_per_root,
+        max_leaf_batch_size=args.max_leaf_batch_size,
+        c_puct=args.c_puct,
+        policy_temperature=args.policy_temperature,
+        root_dirichlet_alpha=args.root_dirichlet_alpha,
+        root_exploration_fraction=args.root_exploration_fraction,
+        add_root_noise=args.add_root_noise,
+        max_selection_depth=args.max_plies,
+        seed=args.seed,
+    )
+    return BatchedPUCTMCTS(evaluator=evaluator, config=search_config)
+
+
+def _load_or_create_model(checkpoint: Path | None, device: torch.device) -> Connect4ResNet3D:
+    if checkpoint is None:
+        model = Connect4ResNet3D(ResNet3DConfig())
+        model.eval()
+        return model.to(device)
+    state = load_checkpoint(checkpoint, map_location=device)
+    state.model.eval()
+    return state.model.to(device)
 
 
 def _metadata(args: argparse.Namespace, device: torch.device, tree_device: torch.device) -> dict[str, str]:
@@ -192,6 +237,7 @@ def _metadata(args: argparse.Namespace, device: torch.device, tree_device: torch
         "git_branch": git_branch(),
         "device": str(device),
         "rollout_device": str(device),
+        "backend": args.backend,
         "tree_device": str(tree_device),
         "games_requested": args.games,
         "batch_size": args.batch_size,
@@ -202,6 +248,11 @@ def _metadata(args: argparse.Namespace, device: torch.device, tree_device: torch
         "max_rollouts_per_chunk": args.max_rollouts_per_chunk,
         "exploration_constant": args.exploration_constant,
         "virtual_loss": args.virtual_loss,
+        "c_puct": args.c_puct,
+        "checkpoint": str(args.checkpoint) if args.checkpoint is not None else None,
+        "add_root_noise": args.add_root_noise,
+        "root_dirichlet_alpha": args.root_dirichlet_alpha,
+        "root_exploration_fraction": args.root_exploration_fraction,
         "policy_temperature": args.policy_temperature,
         "action_temperature": args.action_temperature,
         "max_plies": args.max_plies,

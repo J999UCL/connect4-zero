@@ -108,6 +108,14 @@ class BatchedSearchResult:
 
 
 @dataclass(frozen=True)
+class PolicyValueBatch:
+    """Neural evaluator output for a batch of states."""
+
+    priors: torch.Tensor
+    values: torch.Tensor
+
+
+@dataclass(frozen=True)
 class TreeMCTSConfig:
     """Configuration for production batched deep MCTS."""
 
@@ -139,3 +147,34 @@ class TreeMCTSConfig:
             raise ValueError("max_rollout_steps must be positive")
         if self.max_rollouts_per_chunk <= 0:
             raise ValueError("max_rollouts_per_chunk must be positive")
+
+
+@dataclass(frozen=True)
+class PUCTMCTSConfig:
+    """Configuration for AlphaZero-style neural PUCT search."""
+
+    simulations_per_root: int = 128
+    max_leaf_batch_size: int = 256
+    c_puct: float = 1.5
+    policy_temperature: float = 1.0
+    root_dirichlet_alpha: float = 0.3
+    root_exploration_fraction: float = 0.25
+    add_root_noise: bool = False
+    max_selection_depth: int = BOARD_CELLS
+    seed: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        if self.simulations_per_root <= 0:
+            raise ValueError("simulations_per_root must be positive")
+        if self.max_leaf_batch_size <= 0:
+            raise ValueError("max_leaf_batch_size must be positive")
+        if self.c_puct < 0:
+            raise ValueError("c_puct must be non-negative")
+        if self.policy_temperature <= 0:
+            raise ValueError("policy_temperature must be positive")
+        if self.root_dirichlet_alpha <= 0:
+            raise ValueError("root_dirichlet_alpha must be positive")
+        if not 0 <= self.root_exploration_fraction <= 1:
+            raise ValueError("root_exploration_fraction must be in [0, 1]")
+        if self.max_selection_depth <= 0:
+            raise ValueError("max_selection_depth must be positive")

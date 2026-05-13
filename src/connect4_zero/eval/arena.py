@@ -22,7 +22,7 @@ _BASELINE = -1
 
 @dataclass(frozen=True)
 class ArenaConfig:
-    """Configuration for deterministic checkpoint-vs-checkpoint evaluation."""
+    """Configuration for checkpoint-vs-checkpoint evaluation."""
 
     candidate_checkpoint: Path
     baseline_checkpoint: Path
@@ -37,6 +37,12 @@ class ArenaConfig:
     max_plies: int = 64
     seed: Optional[int] = None
     alternate_starts: bool = True
+    opening_plies: int = 0
+    paired_openings: bool = False
+    add_root_noise: bool = False
+    root_dirichlet_alpha: float = 0.3
+    root_exploration_fraction: float = 0.25
+    action_temperature: float = 0.0
 
     def __post_init__(self) -> None:
         if self.games <= 0:
@@ -55,6 +61,20 @@ class ArenaConfig:
             raise ValueError("inference_batch_size must be positive")
         if self.max_plies <= 0:
             raise ValueError("max_plies must be positive")
+        if self.opening_plies < 0:
+            raise ValueError("opening_plies must be non-negative")
+        if self.opening_plies > 6:
+            raise ValueError("opening_plies must be <= 6 to avoid terminal random openings")
+        if self.paired_openings and self.games % 2 != 0:
+            raise ValueError("paired_openings requires an even number of games")
+        if self.paired_openings and self.batch_size % 2 != 0:
+            raise ValueError("paired_openings requires an even batch_size")
+        if self.root_dirichlet_alpha <= 0:
+            raise ValueError("root_dirichlet_alpha must be positive")
+        if not 0 <= self.root_exploration_fraction <= 1:
+            raise ValueError("root_exploration_fraction must be in [0, 1]")
+        if self.action_temperature < 0:
+            raise ValueError("action_temperature must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -72,6 +92,11 @@ class ArenaSummary:
     avg_plies: float
     elapsed_seconds: float
     games_per_second: float
+    opening_plies: int = 0
+    paired_openings: bool = False
+    unique_openings: int = 1
+    add_root_noise: bool = False
+    action_temperature: float = 0.0
     candidate_first: dict[str, int] = field(default_factory=dict)
     baseline_first: dict[str, int] = field(default_factory=dict)
 
@@ -87,10 +112,13 @@ def evaluate_arena(config: ArenaConfig, logger=None) -> ArenaSummary:
     """Play an arena and return aggregate results."""
     if config.seed is not None:
         torch.manual_seed(config.seed)
+    rng = torch.Generator(device="cpu")
+    if config.seed is not None:
+        rng.manual_seed(config.seed)
 
     device = torch.device(config.device)
-    candidate_search = _build_search(config.candidate_checkpoint, config, device)
-    baseline_search = _build_search(config.baseline_checkpoint, config, device)
+    candidate_search = _build_search(config.candidate_checkpoint, config, device, seed_offset=17)
+    baseline_search = _build_search(config.baseline_checkpoint, config, device, seed_offset=29)
 
     candidate_wins = 0
     baseline_wins = 0
@@ -112,6 +140,7 @@ def evaluate_arena(config: ArenaConfig, logger=None) -> ArenaSummary:
             config=config,
             candidate_search=candidate_search,
             baseline_search=baseline_search,
+            rng=rng,
         )
         completed += batch_games
         next_game_index += batch_games
@@ -149,12 +178,23 @@ def evaluate_arena(config: ArenaConfig, logger=None) -> ArenaSummary:
         avg_plies=total_plies / config.games,
         elapsed_seconds=elapsed_seconds,
         games_per_second=config.games / elapsed_seconds if elapsed_seconds > 0 else 0.0,
+        opening_plies=config.opening_plies,
+        paired_openings=config.paired_openings,
+        unique_openings=_unique_opening_count(config),
+        add_root_noise=config.add_root_noise,
+        action_temperature=config.action_temperature,
         candidate_first=candidate_first,
         baseline_first=baseline_first,
     )
 
 
-def _build_search(checkpoint: Path, config: ArenaConfig, device: torch.device) -> BatchedPUCTMCTS:
+def _build_search(
+    checkpoint: Path,
+    config: ArenaConfig,
+    device: torch.device,
+    *,
+    seed_offset: int,
+) -> BatchedPUCTMCTS:
     loaded = load_checkpoint(checkpoint, map_location=device)
     evaluator = NeuralPolicyValueEvaluator(
         model=loaded.model,
@@ -166,9 +206,11 @@ def _build_search(checkpoint: Path, config: ArenaConfig, device: torch.device) -
         max_leaf_batch_size=config.max_leaf_batch_size,
         c_puct=config.c_puct,
         policy_temperature=config.policy_temperature,
-        add_root_noise=False,
+        root_dirichlet_alpha=config.root_dirichlet_alpha,
+        root_exploration_fraction=config.root_exploration_fraction,
+        add_root_noise=config.add_root_noise,
         max_selection_depth=config.max_plies,
-        seed=config.seed,
+        seed=None if config.seed is None else config.seed + seed_offset,
     )
     return BatchedPUCTMCTS(evaluator=evaluator, config=search_config)
 
@@ -180,14 +222,16 @@ def _play_batch(
     config: ArenaConfig,
     candidate_search: BatchedPUCTMCTS,
     baseline_search: BatchedPUCTMCTS,
+    rng: torch.Generator,
 ) -> dict[str, object]:
     games = Connect4x4x4Batch(batch_games, device="cpu")
+    _apply_openings(games, start_index=start_index, config=config, rng=rng)
     active = torch.ones(batch_games, dtype=torch.bool)
     owners = _initial_owners(start_index, batch_games, alternate=config.alternate_starts)
     starters = owners.clone()
     candidate_trees: list[Optional[PUCTSearchTree]] = [None for _ in range(batch_games)]
     baseline_trees: list[Optional[PUCTSearchTree]] = [None for _ in range(batch_games)]
-    plies = torch.zeros(batch_games, dtype=torch.long)
+    plies = torch.full((batch_games,), config.opening_plies, dtype=torch.long)
 
     candidate_wins = 0
     baseline_wins = 0
@@ -214,7 +258,12 @@ def _play_batch(
             roots = _slice_batch(games, side_indices.tolist())
             root_trees = [trees[int(index)] for index in side_indices.tolist()]
             result = search.search_batch_with_trees(roots, root_trees)
-            chosen = _choose_actions(result.visit_counts, roots.legal_mask())
+            chosen = _choose_actions(
+                result.visit_counts,
+                roots.legal_mask(),
+                temperature=config.action_temperature,
+                rng=rng,
+            )
             for local_index, game_index in enumerate(side_indices.tolist()):
                 action = int(chosen[local_index].item())
                 actions[game_index] = action
@@ -284,6 +333,46 @@ def _play_batch(
     }
 
 
+def _apply_openings(
+    games: Connect4x4x4Batch,
+    *,
+    start_index: int,
+    config: ArenaConfig,
+    rng: torch.Generator,
+) -> None:
+    if config.opening_plies == 0:
+        return
+
+    if config.paired_openings:
+        for offset in range(0, games.batch_size, 2):
+            state = _random_opening(config.opening_plies, rng)
+            _copy_single_state(state, games, offset)
+            _copy_single_state(state, games, offset + 1)
+        return
+
+    for offset in range(games.batch_size):
+        _copy_single_state(_random_opening(config.opening_plies, rng), games, offset)
+
+
+def _random_opening(opening_plies: int, rng: torch.Generator) -> Connect4x4x4Batch:
+    state = Connect4x4x4Batch(1, device="cpu")
+    for _ in range(opening_plies):
+        legal_actions = state.legal_mask()[0].nonzero(as_tuple=False).flatten()
+        choice_index = int(torch.randint(len(legal_actions), (1,), generator=rng).item())
+        action = legal_actions[choice_index].to(dtype=torch.long).view(1)
+        result = state.step(action)
+        if bool(result.done[0].item()):
+            raise RuntimeError("random opening became terminal; lower opening_plies")
+    return state
+
+
+def _copy_single_state(source: Connect4x4x4Batch, target: Connect4x4x4Batch, index: int) -> None:
+    target.board[index : index + 1] = source.board
+    target.heights[index : index + 1] = source.heights
+    target.done[index : index + 1] = source.done
+    target.outcome[index : index + 1] = source.outcome
+
+
 def _initial_owners(start_index: int, batch_games: int, alternate: bool) -> torch.Tensor:
     owners = torch.full((batch_games,), _CANDIDATE, dtype=torch.int8)
     if alternate:
@@ -303,7 +392,22 @@ def _slice_batch(games: Connect4x4x4Batch, indices: list[int]) -> Connect4x4x4Ba
     return roots
 
 
-def _choose_actions(visit_counts: torch.Tensor, legal_mask: torch.Tensor) -> torch.Tensor:
+def _choose_actions(
+    visit_counts: torch.Tensor,
+    legal_mask: torch.Tensor,
+    *,
+    temperature: float,
+    rng: torch.Generator,
+) -> torch.Tensor:
+    if temperature > 0:
+        weights = visit_counts.to(dtype=torch.float32).pow(1.0 / temperature)
+        weights = weights.masked_fill(~legal_mask, 0.0)
+        fallback = legal_mask.to(dtype=torch.float32)
+        fallback = fallback / fallback.sum(dim=1, keepdim=True).clamp_min(1.0)
+        totals = weights.sum(dim=1, keepdim=True)
+        weights = torch.where(totals > 0, weights / totals.clamp_min(1e-12), fallback)
+        return torch.multinomial(weights.cpu(), num_samples=1, generator=rng).flatten().to(dtype=torch.long)
+
     scores = visit_counts.to(dtype=torch.float32).clone()
     scores = scores.masked_fill(~legal_mask, -1.0)
     chosen = scores.argmax(dim=1)
@@ -312,6 +416,14 @@ def _choose_actions(visit_counts: torch.Tensor, legal_mask: torch.Tensor) -> tor
         fallback = legal_mask.to(dtype=torch.float32).argmax(dim=1)
         chosen = torch.where(no_visits, fallback, chosen)
     return chosen.to(dtype=torch.long)
+
+
+def _unique_opening_count(config: ArenaConfig) -> int:
+    if config.opening_plies == 0:
+        return 1
+    if config.paired_openings:
+        return config.games // 2
+    return config.games
 
 
 def _record_breakdown(

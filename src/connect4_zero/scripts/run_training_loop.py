@@ -51,6 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--arena-simulations-per-root", type=int, default=64)
     parser.add_argument("--arena-max-leaf-batch-size", type=int, default=128)
     parser.add_argument("--arena-inference-batch-size", type=int, default=4096)
+    parser.add_argument("--arena-opening-plies", type=int, default=0)
+    parser.add_argument("--arena-paired-openings", action="store_true")
+    parser.add_argument("--arena-add-root-noise", action="store_true")
+    parser.add_argument("--arena-root-dirichlet-alpha", type=float, default=0.3)
+    parser.add_argument("--arena-root-exploration-fraction", type=float, default=0.25)
+    parser.add_argument("--arena-action-temperature", type=float, default=0.0)
     parser.add_argument("--force", action="store_true", help="Overwrite per-round self-play data dirs.")
     parser.add_argument("--dry-run", action="store_true", help="Write the command plan but do not run child scripts.")
     parser.add_argument("--quiet", action="store_true", help="Reduce loop stdout logging; child scripts remain verbose.")
@@ -246,11 +252,23 @@ def _arena_cmd_template(
         str(args.arena_max_leaf_batch_size),
         "--inference-batch-size",
         str(args.arena_inference_batch_size),
+        "--opening-plies",
+        str(args.arena_opening_plies),
+        "--root-dirichlet-alpha",
+        str(args.arena_root_dirichlet_alpha),
+        "--root-exploration-fraction",
+        str(args.arena_root_exploration_fraction),
+        "--action-temperature",
+        str(args.arena_action_temperature),
         "--max-plies",
         str(args.max_plies),
         "--out",
         str(out),
     ]
+    if args.arena_paired_openings:
+        cmd.append("--paired-openings")
+    if args.arena_add_root_noise:
+        cmd.append("--add-root-noise")
     if seed is not None:
         cmd += ["--seed", str(seed)]
     return cmd
@@ -303,6 +321,20 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--arena-games must be positive")
     if args.arena_batch_size <= 0:
         raise ValueError("--arena-batch-size must be positive")
+    if args.arena_opening_plies < 0:
+        raise ValueError("--arena-opening-plies must be non-negative")
+    if args.arena_opening_plies > 6:
+        raise ValueError("--arena-opening-plies must be <= 6")
+    if args.arena_paired_openings and args.arena_games % 2 != 0:
+        raise ValueError("--arena-paired-openings requires even --arena-games")
+    if args.arena_paired_openings and args.arena_batch_size % 2 != 0:
+        raise ValueError("--arena-paired-openings requires even --arena-batch-size")
+    if args.arena_root_dirichlet_alpha <= 0:
+        raise ValueError("--arena-root-dirichlet-alpha must be positive")
+    if not 0 <= args.arena_root_exploration_fraction <= 1:
+        raise ValueError("--arena-root-exploration-fraction must be in [0, 1]")
+    if args.arena_action_temperature < 0:
+        raise ValueError("--arena-action-temperature must be non-negative")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from connect4_zero.scripts._common import configure_logging, log_config, log_env
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Evaluate two ResNet checkpoints by deterministic PUCT arena play.",
+        description="Evaluate two ResNet checkpoints by PUCT arena play.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--candidate-checkpoint", type=Path, required=True, help="Checkpoint being evaluated.")
@@ -28,6 +28,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-plies", type=int, default=64, help="Safety cap for plies per game.")
     parser.add_argument("--seed", type=int, default=None, help="Optional torch seed.")
     parser.add_argument("--no-alternate-starts", action="store_true", help="Let candidate start every game.")
+    parser.add_argument("--opening-plies", type=int, default=0, help="Random neutral opening plies before agents play.")
+    parser.add_argument(
+        "--paired-openings",
+        action="store_true",
+        help="Use each random opening twice, once with each checkpoint to move.",
+    )
+    parser.add_argument("--add-root-noise", action="store_true", help="Add Dirichlet noise at every arena search root.")
+    parser.add_argument("--root-dirichlet-alpha", type=float, default=0.3, help="Arena root Dirichlet alpha.")
+    parser.add_argument("--root-exploration-fraction", type=float, default=0.25, help="Arena root noise mixture fraction.")
+    parser.add_argument("--action-temperature", type=float, default=0.0, help="Sample arena moves from visits when > 0.")
     parser.add_argument("--out", type=Path, default=Path("runs/arena"), help="Output directory.")
     parser.add_argument("--json-out", type=Path, default=None, help="Optional explicit summary JSON path.")
     parser.add_argument("--quiet", action="store_true", help="Reduce stdout logging; file log remains detailed.")
@@ -61,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
             max_plies=args.max_plies,
             seed=args.seed,
             alternate_starts=not args.no_alternate_starts,
+            opening_plies=args.opening_plies,
+            paired_openings=args.paired_openings,
+            add_root_noise=args.add_root_noise,
+            root_dirichlet_alpha=args.root_dirichlet_alpha,
+            root_exploration_fraction=args.root_exploration_fraction,
+            action_temperature=args.action_temperature,
         ),
         logger=logger,
     )
@@ -68,13 +84,14 @@ def main(argv: list[str] | None = None) -> int:
     summary.write_json(json_out)
     logger.info("arena_summary=%s", json_out)
     logger.info(
-        "arena_result games=%s candidate_wins=%s baseline_wins=%s draws=%s candidate_score_rate=%.4f avg_plies=%.2f games_per_sec=%.3f",
+        "arena_result games=%s candidate_wins=%s baseline_wins=%s draws=%s candidate_score_rate=%.4f avg_plies=%.2f unique_openings=%s games_per_sec=%.3f",
         summary.games,
         summary.candidate_wins,
         summary.baseline_wins,
         summary.draws,
         summary.candidate_score_rate,
         summary.avg_plies,
+        summary.unique_openings,
         summary.games_per_second,
     )
     return 0
@@ -97,6 +114,20 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--inference-batch-size must be positive")
     if args.max_plies <= 0:
         raise ValueError("--max-plies must be positive")
+    if args.opening_plies < 0:
+        raise ValueError("--opening-plies must be non-negative")
+    if args.opening_plies > 6:
+        raise ValueError("--opening-plies must be <= 6")
+    if args.paired_openings and args.games % 2 != 0:
+        raise ValueError("--paired-openings requires an even --games")
+    if args.paired_openings and args.batch_size % 2 != 0:
+        raise ValueError("--paired-openings requires an even --batch-size")
+    if args.root_dirichlet_alpha <= 0:
+        raise ValueError("--root-dirichlet-alpha must be positive")
+    if not 0 <= args.root_exploration_fraction <= 1:
+        raise ValueError("--root-exploration-fraction must be in [0, 1]")
+    if args.action_temperature < 0:
+        raise ValueError("--action-temperature must be non-negative")
 
 
 if __name__ == "__main__":

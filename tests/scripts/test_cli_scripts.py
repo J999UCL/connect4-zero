@@ -284,6 +284,12 @@ def test_arena_eval_cli_writes_summary(tmp_path: Path) -> None:
             "1",
             "--inference-batch-size",
             "4",
+            "--opening-plies",
+            "2",
+            "--paired-openings",
+            "--add-root-noise",
+            "--action-temperature",
+            "1.0",
             "--out",
             str(tmp_path / "arena"),
             "--quiet",
@@ -294,6 +300,11 @@ def test_arena_eval_cli_writes_summary(tmp_path: Path) -> None:
     summary = json.loads(summary_path.read_text())
     assert exit_code == 0
     assert summary["games"] == 2
+    assert summary["opening_plies"] == 2
+    assert summary["paired_openings"] is True
+    assert summary["unique_openings"] == 1
+    assert summary["add_root_noise"] is True
+    assert summary["action_temperature"] == 1.0
     assert summary["candidate_wins"] + summary["baseline_wins"] + summary["draws"] == 2
     assert list((tmp_path / "arena" / "logs").glob("arena_eval-*.log"))
 
@@ -320,6 +331,12 @@ def test_run_training_loop_dry_run_writes_plan(tmp_path: Path) -> None:
             "2",
             "--arena-games",
             "2",
+            "--arena-opening-plies",
+            "2",
+            "--arena-paired-openings",
+            "--arena-add-root-noise",
+            "--arena-action-temperature",
+            "1.0",
             "--dry-run",
             "--quiet",
         ]
@@ -330,4 +347,6 @@ def test_run_training_loop_dry_run_writes_plan(tmp_path: Path) -> None:
     assert exit_code == 0
     assert plan["run_id"] == "dry"
     assert len(plan["rounds"]) == 2
+    assert "--paired-openings" in plan["rounds"][0]["arena_template"]
+    assert "--add-root-noise" in plan["rounds"][0]["arena_template"]
     assert list((tmp_path / "runs" / "dry" / "logs").glob("run_training_loop-*.log"))

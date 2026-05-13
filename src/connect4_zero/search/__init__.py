@@ -1,6 +1,7 @@
 """Production search utilities for 4x4x4 Connect Four."""
 
 from connect4_zero.search.rollout import BatchedRandomRolloutEvaluator, RandomRolloutEvaluator
+from connect4_zero.search.inference_server import SharedInferenceClientEvaluator, run_policy_value_server
 from connect4_zero.search.neural_evaluator import NeuralPolicyValueEvaluator
 from connect4_zero.search.puct_mcts import BatchedPUCTMCTS
 from connect4_zero.search.puct_tree import PUCTNode, PUCTSearchTree
@@ -27,6 +28,8 @@ __all__ = [
     "PUCTSearchTree",
     "RandomRolloutEvaluator",
     "SearchTree",
+    "SharedInferenceClientEvaluator",
     "TreeMCTSConfig",
     "TreeNode",
+    "run_policy_value_server",
 ]

@@ -191,6 +191,56 @@ def test_generate_selfplay_cli_multiprocess_merges_worker_manifests(tmp_path: Pa
     assert len(dataset) == sum(record["num_samples"] for record in records)
 
 
+def test_generate_selfplay_cli_puct_shared_inference_server(tmp_path: Path) -> None:
+    output_dir = tmp_path / "selfplay_puct_server"
+
+    exit_code = generate_main(
+        [
+            "--backend",
+            "puct",
+            "--games",
+            "2",
+            "--out",
+            str(output_dir),
+            "--device",
+            "cpu",
+            "--batch-size",
+            "1",
+            "--games-per-write",
+            "1",
+            "--samples-per-shard",
+            "128",
+            "--simulations-per-root",
+            "1",
+            "--max-leaf-batch-size",
+            "1",
+            "--puct-inference-batch-size",
+            "4",
+            "--puct-inference-mode",
+            "server",
+            "--puct-server-max-batch-size",
+            "8",
+            "--puct-server-batch-timeout-ms",
+            "1",
+            "--action-temperature",
+            "0",
+            "--num-workers",
+            "2",
+            "--worker-start-method",
+            "fork",
+            "--seed",
+            "11",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    manifest_path = output_dir / "manifest.jsonl"
+    records = [json.loads(line) for line in manifest_path.read_text().splitlines()]
+    assert len(records) == 2
+    assert list((output_dir / "logs").glob("puct_inference_server-*.log"))
+
+
 def test_train_resnet_cli_dry_run(tmp_path: Path) -> None:
     exit_code = train_resnet_main(
         [

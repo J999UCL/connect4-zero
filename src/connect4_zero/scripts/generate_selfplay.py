@@ -34,7 +34,20 @@ from connect4_zero.scripts._common import (
     sync_if_cuda,
     timestamp_slug,
 )
-from connect4_zero.search import BatchedPUCTMCTS, BatchedTreeMCTS, NeuralPolicyValueEvaluator, PUCTMCTSConfig, TreeMCTSConfig
+from connect4_zero.search import (
+    BatchedPUCTMCTS,
+    BatchedTreeMCTS,
+    NeuralPolicyValueEvaluator,
+    PUCTMCTSConfig,
+    SharedInferenceClientEvaluator,
+    TreeMCTSConfig,
+    run_policy_value_server,
+)
+
+
+_SHARED_INFERENCE_REQUEST_QUEUE: Any | None = None
+_SHARED_INFERENCE_RESPONSE_QUEUES: list[Any] | None = None
+_SHARED_INFERENCE_RESPONSE_TIMEOUT_SECONDS = 600.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -57,6 +70,30 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--virtual-loss", type=float, default=1.0, help="Virtual loss used while collecting leaf batches.")
     parser.add_argument("--c-puct", type=float, default=1.5, help="PUCT exploration constant for neural search.")
     parser.add_argument("--puct-inference-batch-size", type=int, default=4096, help="Model inference chunk size for PUCT.")
+    parser.add_argument(
+        "--puct-inference-mode",
+        choices=("auto", "worker", "server"),
+        default="auto",
+        help="PUCT inference ownership. auto uses one shared server for CUDA multiprocessing.",
+    )
+    parser.add_argument(
+        "--puct-server-max-batch-size",
+        type=int,
+        default=4096,
+        help="Maximum neural states evaluated together by the shared PUCT inference server.",
+    )
+    parser.add_argument(
+        "--puct-server-batch-timeout-ms",
+        type=float,
+        default=5.0,
+        help="Milliseconds the shared inference server waits to coalesce worker requests.",
+    )
+    parser.add_argument(
+        "--puct-server-response-timeout",
+        type=float,
+        default=600.0,
+        help="Seconds a worker waits for a shared inference response before failing.",
+    )
     parser.add_argument("--checkpoint", type=Path, default=None, help="Optional ResNet checkpoint for PUCT search.")
     parser.add_argument("--add-root-noise", action="store_true", help="Add AlphaZero Dirichlet root noise for PUCT self-play.")
     parser.add_argument("--root-dirichlet-alpha", type=float, default=0.3, help="PUCT root Dirichlet alpha.")
@@ -175,6 +212,12 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--rollouts-per-leaf must be positive")
     if args.puct_inference_batch_size <= 0:
         raise ValueError("--puct-inference-batch-size must be positive")
+    if args.puct_server_max_batch_size <= 0:
+        raise ValueError("--puct-server-max-batch-size must be positive")
+    if args.puct_server_batch_timeout_ms < 0:
+        raise ValueError("--puct-server-batch-timeout-ms must be non-negative")
+    if args.puct_server_response_timeout <= 0:
+        raise ValueError("--puct-server-response-timeout must be positive")
     if args.torch_threads_per_worker <= 0:
         raise ValueError("--torch-threads-per-worker must be positive")
     if args.cuda_worker_memory_mib <= 0:
@@ -198,6 +241,8 @@ def _generate_serial(
     logger.info("search.backend=%s", args.backend)
     logger.info("search.tree_device=%s", tree_device)
     logger.info("search.evaluator_device=%s", device)
+    if args.backend == "puct" and args.puct_inference_mode == "server":
+        raise ValueError("--puct-inference-mode server requires --num-workers > 1")
 
     search = _build_search(args, device)
     generator = _build_generator(args, search, tree_device)
@@ -234,6 +279,7 @@ def _generate_parallel(
     logger.info("multiprocessing.worker_root=%s", worker_root)
     logger.info("multiprocessing.start_method=%s", args.worker_start_method)
     logger.info("multiprocessing.torch_threads_per_worker=%s", args.torch_threads_per_worker)
+    inference_mode = _resolve_puct_inference_mode(args, device, num_workers, logger)
 
     payloads = []
     for worker_index, worker_games in enumerate(worker_specs):
@@ -245,23 +291,72 @@ def _generate_parallel(
         worker_args["quiet"] = True
         worker_args["num_workers"] = "1"
         worker_args["seed"] = _worker_seed(args.seed, worker_index)
+        worker_args["_worker_index"] = worker_index
+        worker_args["_resolved_puct_inference_mode"] = inference_mode
+        worker_args["_requested_device"] = str(device)
         payloads.append({"worker_index": worker_index, "args": worker_args})
 
     results: list[WorkerResult] = []
     context = mp.get_context(args.worker_start_method)
-    with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers, mp_context=context) as executor:
-        futures = [executor.submit(_run_worker, payload) for payload in payloads]
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            results.append(result)
-            logger.info(
-                "worker_complete index=%s games=%s samples=%s duration=%s output=%s",
-                result.worker_index,
-                result.games,
-                result.samples,
-                format_seconds(result.elapsed_seconds),
-                result.output_dir,
+    server_process: mp.Process | None = None
+    request_queue = None
+    response_queues = None
+    if inference_mode == "server":
+        request_queue = context.Queue(maxsize=max(4, num_workers * 4))
+        response_queues = [context.Queue(maxsize=2) for _ in range(num_workers)]
+        server_log_path = args.out / "logs" / f"puct_inference_server-{timestamp_slug()}.log"
+        server_process = context.Process(
+            target=run_policy_value_server,
+            args=(
+                request_queue,
+                response_queues,
+                str(args.checkpoint) if args.checkpoint is not None else None,
+                str(device),
+                args.puct_inference_batch_size,
+                args.puct_server_max_batch_size,
+                args.puct_server_batch_timeout_ms / 1000.0,
+                str(server_log_path),
+            ),
+            name="connect4-puct-inference-server",
+        )
+        server_process.start()
+        logger.info("puct_inference_server.pid=%s", server_process.pid)
+        logger.info("puct_inference_server.log=%s", server_log_path)
+
+    try:
+        executor_kwargs: dict[str, Any] = {"max_workers": num_workers, "mp_context": context}
+        if inference_mode == "server":
+            executor_kwargs["initializer"] = _init_shared_inference_client
+            executor_kwargs["initargs"] = (
+                request_queue,
+                response_queues,
+                args.puct_server_response_timeout,
             )
+        with concurrent.futures.ProcessPoolExecutor(**executor_kwargs) as executor:
+            futures = [executor.submit(_run_worker, payload) for payload in payloads]
+            for future in concurrent.futures.as_completed(futures):
+                result = future.result()
+                results.append(result)
+                logger.info(
+                    "worker_complete index=%s games=%s samples=%s duration=%s output=%s",
+                    result.worker_index,
+                    result.games,
+                    result.samples,
+                    format_seconds(result.elapsed_seconds),
+                    result.output_dir,
+                )
+    finally:
+        if server_process is not None:
+            assert request_queue is not None
+            request_queue.put(None)
+            server_process.join(timeout=30)
+            if server_process.is_alive():
+                logger.warning("puct_inference_server.terminate pid=%s", server_process.pid)
+                server_process.terminate()
+                server_process.join(timeout=10)
+
+    if server_process is not None and server_process.exitcode not in (0, None):
+        raise RuntimeError(f"PUCT inference server exited with code {server_process.exitcode}")
 
     results.sort(key=lambda result: result.worker_index)
     total_samples = _merge_worker_manifests(args.out, results, logger)
@@ -349,7 +444,7 @@ def _build_generator(args: argparse.Namespace, search, tree_device: torch.device
     return SelfPlayGenerator(search=search, config=self_play_config)
 
 
-def _build_search(args: argparse.Namespace, device: torch.device):
+def _build_search(args: argparse.Namespace, device: torch.device, worker_index: int | None = None):
     if args.backend == "rollout":
         search_config = TreeMCTSConfig(
             simulations_per_root=args.simulations_per_root,
@@ -365,12 +460,18 @@ def _build_search(args: argparse.Namespace, device: torch.device):
         )
         return BatchedTreeMCTS(search_config)
 
-    model = _load_or_create_model(args.checkpoint, device)
-    evaluator = NeuralPolicyValueEvaluator(
-        model=model,
-        device=device,
-        inference_batch_size=args.puct_inference_batch_size,
-    )
+    inference_mode = getattr(args, "_resolved_puct_inference_mode", args.puct_inference_mode)
+    if inference_mode == "server":
+        if worker_index is None:
+            raise RuntimeError("shared PUCT inference requires a worker_index")
+        evaluator = _build_shared_inference_evaluator(worker_index)
+    else:
+        model = _load_or_create_model(args.checkpoint, device)
+        evaluator = NeuralPolicyValueEvaluator(
+            model=model,
+            device=device,
+            inference_batch_size=args.puct_inference_batch_size,
+        )
     search_config = PUCTMCTSConfig(
         simulations_per_root=args.simulations_per_root,
         max_leaf_batch_size=args.max_leaf_batch_size,
@@ -400,18 +501,22 @@ def _run_worker(payload: dict[str, Any]) -> WorkerResult:
     if not args.worker_stdout:
         _remove_stdout_logging(logger)
     started_at = time.perf_counter()
-    device = resolve_device(args.device)
+    requested_device = torch.device(getattr(args, "_requested_device", args.device))
+    inference_mode = getattr(args, "_resolved_puct_inference_mode", args.puct_inference_mode)
+    device = torch.device("cpu") if inference_mode == "server" else resolve_device(args.device)
     tree_device = torch.device("cpu") if device.type in ("cuda", "mps") else device
     logger.info("worker.index=%s", worker_index)
     logger.info("worker.games=%s", args.games)
     logger.info("worker.seed=%s", args.seed)
     logger.info("worker.torch_threads=%s", args.torch_threads_per_worker)
+    logger.info("worker.requested_device=%s", requested_device)
+    logger.info("worker.puct_inference_mode=%s", inference_mode)
     log_environment(logger, device)
     log_config(logger, "self-play worker config", vars(args))
     logger.info("search.backend=%s", args.backend)
     logger.info("search.tree_device=%s", tree_device)
-    logger.info("search.evaluator_device=%s", device)
-    search = _build_search(args, device)
+    logger.info("search.evaluator_device=%s", requested_device if inference_mode == "server" else device)
+    search = _build_search(args, device, worker_index=worker_index)
     generator = _build_generator(args, search, tree_device)
     writer = SelfPlayShardWriter(
         output_dir=args.out,
@@ -488,6 +593,10 @@ def _metadata(
         "exploration_constant": args.exploration_constant,
         "virtual_loss": args.virtual_loss,
         "c_puct": args.c_puct,
+        "puct_inference_batch_size": args.puct_inference_batch_size,
+        "puct_inference_mode": getattr(args, "_resolved_puct_inference_mode", args.puct_inference_mode),
+        "puct_server_max_batch_size": args.puct_server_max_batch_size,
+        "puct_server_batch_timeout_ms": args.puct_server_batch_timeout_ms,
         "checkpoint": str(args.checkpoint) if args.checkpoint is not None else None,
         "add_root_noise": args.add_root_noise,
         "root_dirichlet_alpha": args.root_dirichlet_alpha,
@@ -504,6 +613,54 @@ def _metadata(
     if extra is not None:
         values.update(extra)
     return {key: json.dumps(value) if isinstance(value, (dict, list)) else str(value) for key, value in values.items()}
+
+
+def _resolve_puct_inference_mode(
+    args: argparse.Namespace,
+    device: torch.device,
+    num_workers: int,
+    logger,
+) -> str:
+    if args.backend != "puct":
+        logger.info("puct_inference_mode=none")
+        return "none"
+    if args.puct_inference_mode == "worker":
+        logger.info("puct_inference_mode=worker")
+        return "worker"
+    if args.puct_inference_mode == "server":
+        logger.info("puct_inference_mode=server")
+        return "server"
+
+    resolved = "server" if device.type == "cuda" and num_workers > 1 else "worker"
+    logger.info("puct_inference_mode=auto")
+    logger.info("puct_inference_mode.resolved=%s", resolved)
+    return resolved
+
+
+def _init_shared_inference_client(
+    request_queue: Any,
+    response_queues: list[Any],
+    response_timeout_seconds: float,
+) -> None:
+    global _SHARED_INFERENCE_REQUEST_QUEUE
+    global _SHARED_INFERENCE_RESPONSE_QUEUES
+    global _SHARED_INFERENCE_RESPONSE_TIMEOUT_SECONDS
+    _SHARED_INFERENCE_REQUEST_QUEUE = request_queue
+    _SHARED_INFERENCE_RESPONSE_QUEUES = response_queues
+    _SHARED_INFERENCE_RESPONSE_TIMEOUT_SECONDS = float(response_timeout_seconds)
+
+
+def _build_shared_inference_evaluator(worker_index: int) -> SharedInferenceClientEvaluator:
+    if _SHARED_INFERENCE_REQUEST_QUEUE is None or _SHARED_INFERENCE_RESPONSE_QUEUES is None:
+        raise RuntimeError("shared inference queues were not initialized in this worker")
+    if worker_index < 0 or worker_index >= len(_SHARED_INFERENCE_RESPONSE_QUEUES):
+        raise RuntimeError(f"worker_index {worker_index} has no inference response queue")
+    return SharedInferenceClientEvaluator(
+        request_queue=_SHARED_INFERENCE_REQUEST_QUEUE,
+        response_queue=_SHARED_INFERENCE_RESPONSE_QUEUES[worker_index],
+        response_index=worker_index,
+        response_timeout_seconds=_SHARED_INFERENCE_RESPONSE_TIMEOUT_SECONDS,
+    )
 
 
 def _parse_num_workers(value: str) -> int | None:

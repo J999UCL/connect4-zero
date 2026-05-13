@@ -265,13 +265,20 @@ class TerminalPlaySession:
 
     def _choose_bot_action(self, result: BatchedSearchResult) -> int:
         legal_mask = self.game.legal_mask()[0].detach().cpu()
-        policy = result.policy[0].detach().cpu().masked_fill(~legal_mask, 0.0)
-        if float(policy.sum().item()) <= 0.0:
-            legal_actions = legal_mask.nonzero(as_tuple=False).flatten()
-            if legal_actions.numel() == 0:
-                raise RuntimeError("Bot has no legal actions.")
-            return int(legal_actions[0].item())
-        return int(policy.argmax().item())
+        legal_actions = legal_mask.nonzero(as_tuple=False).flatten()
+        if legal_actions.numel() == 0:
+            raise RuntimeError("Bot has no legal actions.")
+
+        visits = result.visit_counts[0].detach().cpu().masked_fill(~legal_mask, -1.0)
+        best_visit_count = visits[legal_actions].max()
+        visit_tied_actions = legal_actions[visits[legal_actions].eq(best_visit_count)]
+
+        q_values = result.q_values[0].detach().cpu().masked_fill(~legal_mask, -float("inf"))
+        best_q_value = q_values[visit_tied_actions].max()
+        q_tied_actions = visit_tied_actions[
+            torch.isclose(q_values[visit_tied_actions], best_q_value, rtol=0.0, atol=1e-6)
+        ]
+        return _center_preferred_action(q_tied_actions)
 
     def _make_bot_summary(
         self,
@@ -478,6 +485,24 @@ def _piece_symbol(value: int) -> str:
     if value == OPPONENT_PLAYER:
         return "B"
     return "."
+
+
+def _center_preferred_action(actions: torch.Tensor) -> int:
+    """Break exact action ties toward the middle of the 4x4 base."""
+    if actions.numel() == 0:
+        raise RuntimeError("cannot choose from no actions")
+    best_action = int(actions[0].item())
+    best_distance = float("inf")
+    center = (BOARD_SIZE - 1) / 2.0
+    for action_tensor in actions:
+        action = int(action_tensor.item())
+        x = action // BOARD_SIZE
+        y = action % BOARD_SIZE
+        distance = (x - center) ** 2 + (y - center) ** 2
+        if distance < best_distance or (distance == best_distance and action < best_action):
+            best_action = action
+            best_distance = distance
+    return best_action
 
 
 def _top_policy_rows(

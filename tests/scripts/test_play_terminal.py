@@ -4,9 +4,9 @@ import pytest
 import torch
 
 from connect4_zero.game import Connect4x4x4Batch
-from connect4_zero.game.constants import CURRENT_PLAYER
+from connect4_zero.game.constants import ACTION_SIZE, CURRENT_PLAYER
 from connect4_zero.scripts.play_terminal import TerminalPlaySession, main
-from connect4_zero.search import BatchedTreeMCTS, SearchTree, TreeMCTSConfig
+from connect4_zero.search import BatchedSearchResult, BatchedTreeMCTS, SearchTree, TreeMCTSConfig
 
 
 class RecordingEvaluator:
@@ -94,10 +94,28 @@ def test_bot_move_uses_batched_tree_mcts_result_and_picks_legal_action() -> None
     assert move.actor == "bot"
     assert move.action == session.last_bot_action
     assert 0 <= move.action < 16
+    assert move.action != 0
     assert search.last_trees
     assert session.last_bot_summary is not None
     assert session.last_bot_summary.visit_counts.sum().item() == 4
     assert session.engine_player == "human"
+
+
+def test_bot_action_selection_breaks_visit_ties_by_q_then_center() -> None:
+    session = TerminalPlaySession(search=make_search())
+    visit_counts = torch.zeros((1, ACTION_SIZE), dtype=torch.float32)
+    visit_counts[0, [0, 5, 10]] = 7
+    q_values = torch.zeros((1, ACTION_SIZE), dtype=torch.float32)
+    q_values[0, 5] = 0.25
+    q_values[0, 10] = 0.25
+    result = BatchedSearchResult(
+        visit_counts=visit_counts,
+        policy=visit_counts / visit_counts.sum(dim=1, keepdim=True),
+        q_values=q_values,
+        root_values=torch.zeros(1),
+    )
+
+    assert session._choose_bot_action(result) == 5
 
 
 def test_subtree_reuse_advances_after_bot_and_human_moves() -> None:

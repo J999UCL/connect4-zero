@@ -29,6 +29,8 @@ class UniformEvaluator final : public Evaluator {
 
 struct PuctConfig {
   int simulations_per_move = 800;
+  int search_threads = 1;
+  float virtual_loss = 1.0f;
   double c_base = 19652.0;
   double c_init = 1.25;
   double root_dirichlet_alpha = 0.625;
@@ -45,12 +47,21 @@ struct SearchResult {
   core::Action selected_action = -1;
   int max_depth = 0;
   int expanded_nodes = 0;
+  int completed_simulations = 0;
+  int leaf_evaluations = 0;
+  int terminal_evaluations = 0;
+  int virtual_loss_waits = 0;
+  int pending_eval_waits = 0;
+  std::uint32_t root_real_visits = 0;
+  double search_time_ms = 0.0;
 };
 
 struct EdgeStats {
   float prior = 0.0f;
   std::uint32_t visits = 0;
   float value_sum = 0.0f;
+  std::uint32_t virtual_visits = 0;
+  float virtual_value_sum = 0.0f;
 };
 
 struct Node {
@@ -60,6 +71,7 @@ struct Node {
   std::array<int, core::kNumActions> children{};
   std::array<EdgeStats, core::kNumActions> edges{};
   bool expanded = false;
+  bool pending_eval = false;
   bool root_noise_applied = false;
   std::optional<float> terminal_value;
 };
@@ -76,6 +88,7 @@ class SearchTree {
   [[nodiscard]] int node_count() const;
   [[nodiscard]] int max_depth() const;
   [[nodiscard]] bool advance(core::Action action);
+  [[nodiscard]] bool has_pending_or_virtual_stats() const;
 
  private:
   int root_index_ = 0;
@@ -97,7 +110,11 @@ class PuctMcts {
   float expand_node(SearchTree& tree, int node_index, Evaluator& evaluator);
   void add_root_noise(Node& root);
   [[nodiscard]] core::Action select_action(const Node& node) const;
-  [[nodiscard]] SearchResult build_result(const SearchTree& tree, double temperature);
+  [[nodiscard]] SearchResult build_result(
+      const SearchTree& tree,
+      double temperature,
+      const std::array<std::uint32_t, core::kNumActions>& visit_baseline,
+      const std::array<float, core::kNumActions>& value_baseline);
 };
 
 [[nodiscard]] std::array<float, core::kNumActions> normalize_priors(

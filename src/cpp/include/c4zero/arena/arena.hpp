@@ -11,6 +11,7 @@ struct ArenaConfig {
   std::string device = "cpu";
   int games = 2;
   int simulations = 800;
+  int search_threads = 1;
   std::uint64_t seed = 1;
 };
 

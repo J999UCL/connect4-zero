@@ -1,5 +1,6 @@
 #include "c4zero/selfplay/selfplay.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <random>
 #include <stdexcept>
@@ -26,6 +27,7 @@ GeneratedGame generate_game(
   core::Position position = core::Position::empty();
   search::SearchTree tree(position);
   std::vector<PendingSample> pending;
+  GeneratedGame game;
 
   while (!position.is_terminal()) {
     const double temperature = position.ply < config.temperature_sampling_plies ? 1.0 : 0.0;
@@ -33,7 +35,19 @@ GeneratedGame generate_game(
     if (result.selected_action < 0 || !position.is_legal(result.selected_action)) {
       throw std::runtime_error("self-play selected illegal action");
     }
+    std::uint32_t visits = 0;
+    for (auto count : result.visit_counts) {
+      visits += count;
+    }
+    if (visits != static_cast<std::uint32_t>(config.mcts.simulations_per_move)) {
+      throw std::runtime_error("self-play MCTS visit counts do not match simulations");
+    }
     pending.push_back(PendingSample{position, result.policy, result.visit_counts, result.selected_action});
+    game.completed_simulations += result.completed_simulations;
+    game.leaf_evaluations += result.leaf_evaluations;
+    game.terminal_evaluations += result.terminal_evaluations;
+    game.max_depth = std::max(game.max_depth, result.max_depth);
+    game.search_time_ms += result.search_time_ms;
     position = position.play(result.selected_action);
     if (!tree.advance(result.selected_action)) {
       tree = search::SearchTree(position);
@@ -45,7 +59,6 @@ GeneratedGame generate_game(
     throw std::runtime_error("self-play ended without terminal value");
   }
 
-  GeneratedGame game;
   game.terminal_value = *terminal;
   game.plies = position.ply;
   game.samples.reserve(pending.size());

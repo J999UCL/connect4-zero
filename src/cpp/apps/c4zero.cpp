@@ -21,6 +21,10 @@ int to_int(const std::string& value) {
   return std::stoi(value);
 }
 
+float to_float(const std::string& value) {
+  return std::stof(value);
+}
+
 std::string arg_value(int argc, char** argv, const std::string& name, const std::string& fallback) {
   for (int i = 0; i + 1 < argc; ++i) {
     if (argv[i] == name) {
@@ -63,7 +67,7 @@ void usage() {
       << "  bots\n"
       << "  botmatch --bot-a center --bot-b tactical --games 20\n"
       << "  arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 20 --simulations 800\n"
-      << "  selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --out runs/smoke\n";
+      << "  selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --search-threads 4 --out runs/smoke\n";
 }
 
 int run_botmatch(int argc, char** argv) {
@@ -82,6 +86,7 @@ int run_arena(int argc, char** argv) {
   config.device = arg_value(argc, argv, "--device", "cpu");
   config.games = to_int(arg_value(argc, argv, "--games", "2"));
   config.simulations = to_int(arg_value(argc, argv, "--simulations", "800"));
+  config.search_threads = to_int(arg_value(argc, argv, "--search-threads", "1"));
   config.seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
   const auto result = c4zero::arena::play_checkpoint_match(config);
   std::cout << result.summary() << "\n";
@@ -94,26 +99,52 @@ int run_selfplay(int argc, char** argv) {
   const std::string out_dir = arg_value(argc, argv, "--out", "runs/c4zero-smoke");
   const std::string model_path = arg_value(argc, argv, "--model", "");
   const std::string device_name = arg_value(argc, argv, "--device", "cpu");
+  const int search_threads = to_int(arg_value(argc, argv, "--search-threads", "4"));
+  const float virtual_loss = to_float(arg_value(argc, argv, "--virtual-loss", "1.0"));
+  const int inference_batch_size = to_int(arg_value(argc, argv, "--inference-batch-size", "128"));
+  const int inference_max_wait_us = to_int(arg_value(argc, argv, "--inference-max-wait-us", "2000"));
   const auto seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
 
   c4zero::search::UniformEvaluator evaluator;
-  std::unique_ptr<c4zero::model::TorchScriptEvaluator> torchscript_evaluator;
+  std::unique_ptr<c4zero::model::AsyncBatchedTorchScriptEvaluator> torchscript_evaluator;
   c4zero::search::Evaluator* active_evaluator = &evaluator;
   if (!model_path.empty()) {
     torch::Device device(device_name == "cuda" ? torch::kCUDA : torch::kCPU);
-    torchscript_evaluator = std::make_unique<c4zero::model::TorchScriptEvaluator>(model_path, device);
+    c4zero::model::AsyncBatchedTorchScriptConfig inference_config;
+    inference_config.max_batch_size = inference_batch_size;
+    inference_config.max_wait_us = inference_max_wait_us;
+    torchscript_evaluator =
+        std::make_unique<c4zero::model::AsyncBatchedTorchScriptEvaluator>(model_path, device, inference_config);
     active_evaluator = torchscript_evaluator.get();
   }
   c4zero::selfplay::SelfPlayConfig config;
   config.games = games;
   config.mcts.simulations_per_move = simulations;
+  config.mcts.search_threads = search_threads;
+  config.mcts.virtual_loss = virtual_loss;
   config.seed = seed;
 
   std::vector<c4zero::data::SelfPlaySample> all_samples;
   for (int game = 0; game < games; ++game) {
     auto generated = c4zero::selfplay::generate_game(*active_evaluator, config, static_cast<std::uint64_t>(game));
     all_samples.insert(all_samples.end(), generated.samples.begin(), generated.samples.end());
-    std::cout << "game=" << game << " plies=" << generated.plies << " terminal=" << generated.terminal_value << "\n";
+    std::cout << "game=" << game
+              << " plies=" << generated.plies
+              << " terminal=" << generated.terminal_value
+              << " simulations=" << generated.completed_simulations
+              << " leaf_evals=" << generated.leaf_evaluations
+              << " terminal_evals=" << generated.terminal_evaluations
+              << " max_depth=" << generated.max_depth
+              << " search_ms=" << generated.search_time_ms << "\n";
+  }
+  if (torchscript_evaluator) {
+    const auto stats = torchscript_evaluator->stats();
+    std::cout << "inference_requests=" << stats.requests
+              << " inference_batches=" << stats.batches
+              << " mean_batch_size=" << stats.mean_batch_size()
+              << " max_batch_size=" << stats.max_batch_size
+              << " mean_wait_ms=" << stats.mean_wait_ms()
+              << " total_inference_ms=" << stats.total_inference_ms << "\n";
   }
 
   std::filesystem::create_directories(out_dir + "/shards");
@@ -129,6 +160,11 @@ int run_selfplay(int argc, char** argv) {
   manifest_config.root_exploration_fraction = config.mcts.root_exploration_fraction;
   manifest_config.temperature_sampling_plies = config.temperature_sampling_plies;
   manifest_config.add_root_noise = config.add_root_noise;
+  manifest_config.search_threads = config.mcts.search_threads;
+  manifest_config.virtual_loss = config.mcts.virtual_loss;
+  manifest_config.inference_batch_size = model_path.empty() ? 1 : inference_batch_size;
+  manifest_config.inference_max_wait_us = model_path.empty() ? 0 : inference_max_wait_us;
+  manifest_config.evaluator_type = model_path.empty() ? "uniform" : "async_torchscript";
   manifest_config.seed = config.seed;
   manifest_config.git_commit = git_commit();
   c4zero::data::write_manifest(

@@ -51,6 +51,9 @@ ArenaResult play_checkpoint_match(const ArenaConfig& config) {
   if (config.simulations <= 0) {
     throw std::invalid_argument("arena simulations must be positive");
   }
+  if (config.search_threads <= 0) {
+    throw std::invalid_argument("arena search threads must be positive");
+  }
 
   const torch::Device device = parse_device(config.device);
   model::TorchScriptEvaluator evaluator_a(config.model_a, device);
@@ -58,6 +61,7 @@ ArenaResult play_checkpoint_match(const ArenaConfig& config) {
 
   search::PuctConfig mcts_config;
   mcts_config.simulations_per_move = config.simulations;
+  mcts_config.search_threads = config.search_threads;
   mcts_config.seed = config.seed;
   search::PuctMcts mcts_a(mcts_config);
   mcts_config.seed = config.seed ^ 0x9E3779B97F4A7C15ULL;

@@ -191,6 +191,11 @@ void write_manifest(
   out << "    \"root_exploration_fraction\": " << config.root_exploration_fraction << ",\n";
   out << "    \"temperature_sampling_plies\": " << config.temperature_sampling_plies << ",\n";
   out << "    \"add_root_noise\": " << json_bool(config.add_root_noise) << ",\n";
+  out << "    \"search_threads\": " << config.search_threads << ",\n";
+  out << "    \"virtual_loss\": " << config.virtual_loss << ",\n";
+  out << "    \"inference_batch_size\": " << config.inference_batch_size << ",\n";
+  out << "    \"inference_max_wait_us\": " << config.inference_max_wait_us << ",\n";
+  out << "    \"evaluator_type\": " << json_escape(config.evaluator_type) << ",\n";
   out << "    \"seed\": " << config.seed << ",\n";
   out << "    \"git_commit\": " << json_escape(config.git_commit) << "\n";
   out << "  },\n";

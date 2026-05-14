@@ -2,6 +2,11 @@
 #include "test_support.hpp"
 
 #include <cmath>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <set>
+#include <thread>
 
 using namespace c4zero;
 
@@ -34,6 +39,61 @@ class IllegalPriorEvaluator final : public search::Evaluator {
     evaluation.priors[5] = 1.0f;
     return evaluation;
   }
+};
+
+class BlockingUniformEvaluator final : public search::Evaluator {
+ public:
+  explicit BlockingUniformEvaluator(int wait_for_calls) : wait_for_calls_(wait_for_calls) {}
+
+  search::Evaluation evaluate(const core::Position& position) override {
+    std::unique_lock<std::mutex> lock(mutex_);
+    calls_ += 1;
+    positions_.insert(position.compact_string());
+    if (calls_ >= wait_for_calls_) {
+      reached_.notify_all();
+    }
+    if (calls_ > 1 && !released_) {
+      release_.wait(lock, [&]() { return released_; });
+    }
+    search::Evaluation evaluation;
+    evaluation.value = 0.0f;
+    evaluation.priors = search::normalize_priors(evaluation.priors, position.legal_mask());
+    return evaluation;
+  }
+
+  bool wait_until_blocked() {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return reached_.wait_for(lock, std::chrono::seconds(5), [&]() {
+      return calls_ >= wait_for_calls_;
+    });
+  }
+
+  void release() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      released_ = true;
+    }
+    release_.notify_all();
+  }
+
+  int calls() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return calls_;
+  }
+
+  std::size_t unique_positions() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return positions_.size();
+  }
+
+ private:
+  int wait_for_calls_;
+  mutable std::mutex mutex_;
+  std::condition_variable reached_;
+  std::condition_variable release_;
+  int calls_ = 0;
+  bool released_ = false;
+  std::set<std::string> positions_;
 };
 
 int main() {
@@ -106,5 +166,46 @@ int main() {
   C4ZERO_CHECK(full_zero.is_legal(legality.selected_action));
   C4ZERO_CHECK_EQ(legality.visit_counts[0], 0);
   C4ZERO_CHECK_EQ(legality.policy[0], 0.0f);
+
+  search::PuctConfig parallel_config;
+  parallel_config.simulations_per_move = 64;
+  parallel_config.search_threads = 4;
+  parallel_config.seed = 17;
+  search::PuctMcts parallel_mcts(parallel_config);
+  auto parallel_tree = parallel_mcts.make_tree(core::Position::empty());
+  const auto parallel = parallel_mcts.search(parallel_tree, uniform, false, 1.0);
+  std::uint32_t parallel_visits = 0;
+  for (auto value : parallel.visit_counts) {
+    parallel_visits += value;
+  }
+  C4ZERO_CHECK_EQ(parallel_visits, 64);
+  C4ZERO_CHECK_EQ(parallel.completed_simulations, 64);
+  C4ZERO_CHECK(parallel.root_real_visits >= 64);
+  C4ZERO_CHECK(parallel.search_time_ms >= 0.0);
+  C4ZERO_CHECK(!parallel_tree.has_pending_or_virtual_stats());
+
+  search::PuctConfig blocking_config;
+  blocking_config.simulations_per_move = 8;
+  blocking_config.search_threads = 4;
+  blocking_config.seed = 23;
+  BlockingUniformEvaluator blocking(/*wait_for_calls=*/5);
+  search::PuctMcts blocking_mcts(blocking_config);
+  auto blocking_tree = blocking_mcts.make_tree(core::Position::empty());
+  search::SearchResult blocking_result;
+  std::thread search_thread([&]() {
+    blocking_result = blocking_mcts.search(blocking_tree, blocking, false, 1.0);
+  });
+  C4ZERO_CHECK(blocking.wait_until_blocked());
+  C4ZERO_CHECK(blocking.calls() >= 5);
+  blocking.release();
+  search_thread.join();
+  C4ZERO_CHECK(blocking.unique_positions() >= 5);
+  C4ZERO_CHECK(!blocking_tree.has_pending_or_virtual_stats());
+  std::uint32_t blocking_visits = 0;
+  for (auto value : blocking_result.visit_counts) {
+    blocking_visits += value;
+  }
+  C4ZERO_CHECK_EQ(blocking_visits, 8);
+
   return 0;
 }

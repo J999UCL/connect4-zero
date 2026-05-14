@@ -1,11 +1,16 @@
 #include "c4zero/search/puct.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <exception>
 #include <functional>
 #include <limits>
+#include <mutex>
 #include <numeric>
 #include <stdexcept>
+#include <thread>
 
 namespace c4zero::search {
 namespace {
@@ -17,10 +22,30 @@ float q_value(const EdgeStats& edge) {
   return edge.value_sum / static_cast<float>(edge.visits);
 }
 
+std::uint32_t effective_visits(const EdgeStats& edge) {
+  return edge.visits + edge.virtual_visits;
+}
+
+float effective_q_value(const EdgeStats& edge) {
+  const std::uint32_t visits = effective_visits(edge);
+  if (visits == 0) {
+    return 0.0f;
+  }
+  return (edge.value_sum + edge.virtual_value_sum) / static_cast<float>(visits);
+}
+
 std::uint32_t total_visits(const Node& node) {
   std::uint32_t total = 0;
   for (const auto& edge : node.edges) {
     total += edge.visits;
+  }
+  return total;
+}
+
+std::uint32_t total_effective_visits(const Node& node) {
+  std::uint32_t total = 0;
+  for (const auto& edge : node.edges) {
+    total += effective_visits(edge);
   }
   return total;
 }
@@ -61,6 +86,215 @@ std::array<float, core::kNumActions> policy_from_visits(const std::array<std::ui
     }
   }
   return policy;
+}
+
+struct PathStep {
+  int node_index = -1;
+  core::Action action = -1;
+};
+
+struct Reservation {
+  std::vector<PathStep> path;
+  int node_index = -1;
+  core::Position position;
+  bool needs_evaluation = false;
+  float value = 0.0f;
+};
+
+struct SearchRuntime {
+  SearchTree& tree;
+  const PuctConfig& config;
+  std::mutex mutex;
+  std::condition_variable cv;
+  int launched_simulations = 0;
+  int completed_simulations = 0;
+  int leaf_evaluations = 0;
+  int terminal_evaluations = 0;
+  int virtual_loss_waits = 0;
+  int pending_eval_waits = 0;
+  bool stop = false;
+  std::exception_ptr error;
+};
+
+void apply_virtual_loss(SearchTree& tree, const std::vector<PathStep>& path, float virtual_loss) {
+  for (const PathStep& step : path) {
+    EdgeStats& edge = tree.nodes().at(step.node_index).edges[step.action];
+    edge.virtual_visits += 1;
+    edge.virtual_value_sum -= virtual_loss;
+  }
+}
+
+void remove_virtual_loss(SearchTree& tree, const std::vector<PathStep>& path, float virtual_loss) {
+  for (const PathStep& step : path) {
+    EdgeStats& edge = tree.nodes().at(step.node_index).edges[step.action];
+    if (edge.virtual_visits == 0) {
+      throw std::runtime_error("virtual loss underflow");
+    }
+    edge.virtual_visits -= 1;
+    edge.virtual_value_sum += virtual_loss;
+    if (edge.virtual_visits == 0 && std::fabs(edge.virtual_value_sum) < 1e-6f) {
+      edge.virtual_value_sum = 0.0f;
+    }
+  }
+}
+
+void backup_real_value(SearchTree& tree, const std::vector<PathStep>& path, float leaf_value) {
+  float value = leaf_value;
+  for (auto it = path.rbegin(); it != path.rend(); ++it) {
+    value = -value;
+    EdgeStats& edge = tree.nodes().at(it->node_index).edges[it->action];
+    edge.visits += 1;
+    edge.value_sum += value;
+  }
+}
+
+struct ActionSelection {
+  core::Action action = -1;
+  bool blocked_by_pending = false;
+};
+
+ActionSelection select_effective_action(const SearchTree& tree, int node_index, const PuctConfig& config) {
+  const Node& node = tree.nodes().at(node_index);
+  const std::uint16_t legal = node.position.legal_mask();
+  const std::uint32_t parent_visits = total_effective_visits(node);
+  const double c = exploration_constant(config, parent_visits);
+  const double sqrt_parent = std::sqrt(static_cast<double>(parent_visits));
+  double best_score = -std::numeric_limits<double>::infinity();
+  core::Action best_action = -1;
+  bool saw_pending = false;
+  for (core::Action action = 0; action < core::kNumActions; ++action) {
+    if ((legal & (1u << action)) == 0) {
+      continue;
+    }
+    const int child_index = node.children[action];
+    if (child_index >= 0 && tree.nodes().at(child_index).pending_eval) {
+      saw_pending = true;
+      continue;
+    }
+    const EdgeStats& edge = node.edges[action];
+    const double q = effective_q_value(edge);
+    const double u = c * static_cast<double>(edge.prior) * sqrt_parent /
+        (1.0 + static_cast<double>(effective_visits(edge)));
+    const double score = q + u;
+    if (score > best_score) {
+      best_score = score;
+      best_action = action;
+    }
+  }
+  return ActionSelection{best_action, best_action < 0 && saw_pending};
+}
+
+bool reserve_simulation_locked(SearchRuntime& runtime, Reservation& reservation) {
+  SearchTree& tree = runtime.tree;
+  const PuctConfig& config = runtime.config;
+  int node_index = tree.root_index();
+  std::vector<PathStep> path;
+
+  while (true) {
+    Node& node = tree.nodes().at(node_index);
+    if (node.terminal_value.has_value()) {
+      reservation.path = std::move(path);
+      reservation.node_index = node_index;
+      reservation.position = node.position;
+      reservation.needs_evaluation = false;
+      reservation.value = *node.terminal_value;
+      apply_virtual_loss(tree, reservation.path, config.virtual_loss);
+      return true;
+    }
+
+    if (!node.expanded) {
+      if (node.pending_eval) {
+        runtime.pending_eval_waits += 1;
+        return false;
+      }
+      node.pending_eval = true;
+      reservation.path = std::move(path);
+      reservation.node_index = node_index;
+      reservation.position = node.position;
+      reservation.needs_evaluation = true;
+      apply_virtual_loss(tree, reservation.path, config.virtual_loss);
+      return true;
+    }
+
+    const ActionSelection selected = select_effective_action(tree, node_index, config);
+    if (selected.action < 0 && selected.blocked_by_pending) {
+      runtime.virtual_loss_waits += 1;
+      return false;
+    }
+    const core::Action action = selected.action;
+    if (action < 0) {
+      reservation.path = std::move(path);
+      reservation.node_index = node_index;
+      reservation.position = node.position;
+      reservation.needs_evaluation = false;
+      reservation.value = 0.0f;
+      apply_virtual_loss(tree, reservation.path, config.virtual_loss);
+      return true;
+    }
+
+    int child_index = node.children[action];
+    path.push_back(PathStep{node_index, action});
+    if (child_index < 0) {
+      Node child;
+      child.position = node.position.play(action);
+      child.parent = node_index;
+      child.parent_action = action;
+      child.children.fill(-1);
+      child.terminal_value = child.position.terminal_value();
+      child_index = static_cast<int>(tree.nodes().size());
+      tree.nodes().push_back(child);
+      tree.nodes().at(node_index).children[action] = child_index;
+    }
+
+    Node& child = tree.nodes().at(child_index);
+    if (child.terminal_value.has_value()) {
+      reservation.path = std::move(path);
+      reservation.node_index = child_index;
+      reservation.position = child.position;
+      reservation.needs_evaluation = false;
+      reservation.value = *child.terminal_value;
+      apply_virtual_loss(tree, reservation.path, config.virtual_loss);
+      return true;
+    }
+    if (!child.expanded) {
+      if (child.pending_eval) {
+        runtime.pending_eval_waits += 1;
+        return false;
+      }
+      child.pending_eval = true;
+      reservation.path = std::move(path);
+      reservation.node_index = child_index;
+      reservation.position = child.position;
+      reservation.needs_evaluation = true;
+      apply_virtual_loss(tree, reservation.path, config.virtual_loss);
+      return true;
+    }
+    node_index = child_index;
+  }
+}
+
+void complete_simulation_locked(SearchRuntime& runtime, Reservation& reservation, const Evaluation* evaluation) {
+  SearchTree& tree = runtime.tree;
+  float leaf_value = reservation.value;
+  if (reservation.needs_evaluation) {
+    Node& node = tree.nodes().at(reservation.node_index);
+    if (!node.pending_eval) {
+      throw std::runtime_error("completed evaluation for a node that is not pending");
+    }
+    const auto priors = normalize_priors(evaluation->priors, node.position.legal_mask());
+    for (core::Action action = 0; action < core::kNumActions; ++action) {
+      node.edges[action].prior = priors[action];
+    }
+    node.expanded = true;
+    node.pending_eval = false;
+    leaf_value = evaluation->value;
+    runtime.leaf_evaluations += 1;
+  } else {
+    runtime.terminal_evaluations += 1;
+  }
+  remove_virtual_loss(tree, reservation.path, runtime.config.virtual_loss);
+  backup_real_value(tree, reservation.path, leaf_value);
+  runtime.completed_simulations += 1;
 }
 
 }  // namespace
@@ -120,6 +354,20 @@ int SearchTree::max_depth() const {
   return best;
 }
 
+bool SearchTree::has_pending_or_virtual_stats() const {
+  for (const Node& node : nodes_) {
+    if (node.pending_eval) {
+      return true;
+    }
+    for (const EdgeStats& edge : node.edges) {
+      if (edge.virtual_visits != 0 || std::fabs(edge.virtual_value_sum) > 1e-6f) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 bool SearchTree::advance(core::Action action) {
   if (action < 0 || action >= core::kNumActions) {
     return false;
@@ -167,6 +415,17 @@ const PuctConfig& PuctMcts::config() const {
 }
 
 SearchResult PuctMcts::search(SearchTree& tree, Evaluator& evaluator, bool add_noise, double temperature) {
+  const auto search_started = std::chrono::steady_clock::now();
+  if (config_.search_threads <= 0) {
+    throw std::invalid_argument("search_threads must be positive");
+  }
+  if (config_.simulations_per_move < 0) {
+    throw std::invalid_argument("simulations_per_move must be non-negative");
+  }
+  if (config_.virtual_loss < 0.0f) {
+    throw std::invalid_argument("virtual_loss must be non-negative");
+  }
+
   if (!tree.root().expanded && !tree.root().terminal_value.has_value()) {
     expand_node(tree, tree.root_index(), evaluator);
   }
@@ -174,63 +433,122 @@ SearchResult PuctMcts::search(SearchTree& tree, Evaluator& evaluator, bool add_n
     add_root_noise(tree.root());
   }
 
-  for (int simulation = 0; simulation < config_.simulations_per_move; ++simulation) {
-    int node_index = tree.root_index();
-    std::vector<std::pair<int, core::Action>> path;
-    float leaf_value = 0.0f;
+  std::uint32_t root_visits_before = 0;
+  std::array<std::uint32_t, core::kNumActions> root_visit_baseline{};
+  std::array<float, core::kNumActions> root_value_baseline{};
+  for (const EdgeStats& edge : tree.root().edges) {
+    root_visits_before += edge.visits;
+  }
+  for (core::Action action = 0; action < core::kNumActions; ++action) {
+    root_visit_baseline[action] = tree.root().edges[action].visits;
+    root_value_baseline[action] = tree.root().edges[action].value_sum;
+  }
+  int completed_simulations = 0;
+  int leaf_evaluations = 0;
+  int terminal_evaluations = 0;
+  int virtual_loss_waits = 0;
+  int pending_eval_waits = 0;
 
-    while (true) {
-      Node& node = tree.nodes().at(node_index);
-      if (node.terminal_value.has_value()) {
-        leaf_value = *node.terminal_value;
-        break;
+  if (config_.simulations_per_move > 0 && !tree.root().terminal_value.has_value()) {
+    SearchRuntime runtime{tree, config_};
+    const int worker_count = std::max(1, std::min(config_.search_threads, config_.simulations_per_move));
+    auto worker = [&]() {
+      while (true) {
+        Reservation reservation;
+        bool reserved = false;
+        try {
+          {
+            std::unique_lock<std::mutex> lock(runtime.mutex);
+            while (true) {
+              if (runtime.stop || runtime.launched_simulations >= config_.simulations_per_move) {
+                return;
+              }
+              if (reserve_simulation_locked(runtime, reservation)) {
+                runtime.launched_simulations += 1;
+                reserved = true;
+                break;
+              }
+              runtime.cv.wait(lock);
+            }
+          }
+
+          Evaluation evaluation;
+          Evaluation* evaluation_ptr = nullptr;
+          if (reservation.needs_evaluation) {
+            evaluation = evaluator.evaluate(reservation.position);
+            evaluation_ptr = &evaluation;
+          }
+
+          {
+            std::lock_guard<std::mutex> lock(runtime.mutex);
+            complete_simulation_locked(runtime, reservation, evaluation_ptr);
+          }
+          runtime.cv.notify_all();
+        } catch (...) {
+          {
+            std::lock_guard<std::mutex> lock(runtime.mutex);
+            if (reserved) {
+              if (reservation.needs_evaluation && reservation.node_index >= 0 &&
+                  reservation.node_index < static_cast<int>(runtime.tree.nodes().size())) {
+                runtime.tree.nodes().at(reservation.node_index).pending_eval = false;
+              }
+              remove_virtual_loss(runtime.tree, reservation.path, runtime.config.virtual_loss);
+            }
+            runtime.stop = true;
+            if (!runtime.error) {
+              runtime.error = std::current_exception();
+            }
+          }
+          runtime.cv.notify_all();
+          return;
+        }
       }
-      if (!node.expanded) {
-        leaf_value = expand_node(tree, node_index, evaluator);
-        break;
-      }
-      const core::Action action = select_action(node);
-      if (action < 0) {
-        leaf_value = 0.0f;
-        break;
-      }
-      path.push_back({node_index, action});
-      int child_index = node.children[action];
-      if (child_index < 0) {
-        Node child;
-        child.position = node.position.play(action);
-        child.parent = node_index;
-        child.parent_action = action;
-        child.children.fill(-1);
-        child.terminal_value = child.position.terminal_value();
-        child_index = static_cast<int>(tree.nodes().size());
-        node.children[action] = child_index;
-        tree.nodes().push_back(child);
-      }
-      Node& child = tree.nodes().at(child_index);
-      if (child.terminal_value.has_value()) {
-        leaf_value = *child.terminal_value;
-        break;
-      }
-      if (!child.expanded) {
-        leaf_value = expand_node(tree, child_index, evaluator);
-        break;
-      }
-      node_index = child_index;
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(static_cast<std::size_t>(worker_count));
+    for (int index = 0; index < worker_count; ++index) {
+      workers.emplace_back(worker);
+    }
+    for (auto& thread : workers) {
+      thread.join();
+    }
+    if (runtime.error) {
+      std::rethrow_exception(runtime.error);
     }
 
-    float value = leaf_value;
-    for (auto it = path.rbegin(); it != path.rend(); ++it) {
-      value = -value;
-      EdgeStats& edge = tree.nodes().at(it->first).edges[it->second];
-      edge.visits += 1;
-      edge.value_sum += value;
+    if (runtime.completed_simulations != config_.simulations_per_move) {
+      throw std::runtime_error("parallel PUCT completed an unexpected number of simulations");
     }
+    if (tree.has_pending_or_virtual_stats()) {
+      throw std::runtime_error("parallel PUCT left pending evaluations or virtual stats behind");
+    }
+    completed_simulations = runtime.completed_simulations;
+    leaf_evaluations = runtime.leaf_evaluations;
+    terminal_evaluations = runtime.terminal_evaluations;
+    virtual_loss_waits = runtime.virtual_loss_waits;
+    pending_eval_waits = runtime.pending_eval_waits;
   }
 
-  SearchResult result = build_result(tree, temperature);
+  SearchResult result = build_result(tree, temperature, root_visit_baseline, root_value_baseline);
   result.max_depth = tree.max_depth();
   result.expanded_nodes = tree.node_count();
+  result.completed_simulations = completed_simulations;
+  result.leaf_evaluations = leaf_evaluations;
+  result.terminal_evaluations = terminal_evaluations;
+  result.virtual_loss_waits = virtual_loss_waits;
+  result.pending_eval_waits = pending_eval_waits;
+  std::uint32_t root_visits = 0;
+  for (const EdgeStats& edge : tree.root().edges) {
+    root_visits += edge.visits;
+  }
+  result.root_real_visits = root_visits;
+  result.search_time_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - search_started).count();
+  if (!tree.root().terminal_value.has_value() &&
+      root_visits != root_visits_before + static_cast<std::uint32_t>(completed_simulations)) {
+    throw std::runtime_error("root visits do not match completed PUCT simulations");
+  }
   return result;
 }
 
@@ -301,13 +619,23 @@ core::Action PuctMcts::select_action(const Node& node) const {
   return best_action;
 }
 
-SearchResult PuctMcts::build_result(const SearchTree& tree, double temperature) {
+SearchResult PuctMcts::build_result(
+    const SearchTree& tree,
+    double temperature,
+    const std::array<std::uint32_t, core::kNumActions>& visit_baseline,
+    const std::array<float, core::kNumActions>& value_baseline) {
   SearchResult result;
   const Node& root = tree.root();
   for (core::Action action = 0; action < core::kNumActions; ++action) {
     const EdgeStats& edge = root.edges[action];
-    result.visit_counts[action] = edge.visits;
-    result.q_values[action] = q_value(edge);
+    if (edge.visits < visit_baseline[action]) {
+      throw std::runtime_error("root visit baseline exceeds current visits");
+    }
+    result.visit_counts[action] = edge.visits - visit_baseline[action];
+    const float value_delta = edge.value_sum - value_baseline[action];
+    result.q_values[action] = result.visit_counts[action] == 0
+        ? q_value(edge)
+        : value_delta / static_cast<float>(result.visit_counts[action]);
   }
   result.policy = policy_from_visits(result.visit_counts, temperature);
   result.selected_action = sample_action(result.policy, root.position.legal_mask(), rng_);
@@ -322,8 +650,8 @@ SearchResult PuctMcts::build_result(const SearchTree& tree, double temperature) 
   std::uint32_t visits = 0;
   float value_sum = 0.0f;
   for (core::Action action = 0; action < core::kNumActions; ++action) {
-    visits += root.edges[action].visits;
-    value_sum += root.edges[action].value_sum;
+    visits += result.visit_counts[action];
+    value_sum += root.edges[action].value_sum - value_baseline[action];
   }
   result.root_value = visits == 0 ? 0.0f : value_sum / static_cast<float>(visits);
   return result;

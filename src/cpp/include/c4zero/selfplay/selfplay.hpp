@@ -20,6 +20,11 @@ struct GeneratedGame {
   std::vector<data::SelfPlaySample> samples;
   float terminal_value = 0.0f;
   int plies = 0;
+  int completed_simulations = 0;
+  int leaf_evaluations = 0;
+  int terminal_evaluations = 0;
+  int max_depth = 0;
+  double search_time_ms = 0.0;
 };
 
 [[nodiscard]] GeneratedGame generate_game(

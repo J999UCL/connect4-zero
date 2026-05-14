@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from c4zero_tools.datasets import HEADER, MAGIC, POLICY, SAMPLE_PREFIX, VALUE, VISITS
 from c4zero_tools.version import current_version_info
 from c4zero_train.replay import ReplayBuffer
@@ -54,3 +56,36 @@ def test_replay_rejects_decreasing_manifest_timestamps(tmp_path):
         assert "oldest-to-newest" in str(error)
     else:
         raise AssertionError("expected replay chronology validation to fail")
+
+
+def test_replay_rejects_manifest_with_no_samples(tmp_path):
+    (tmp_path / "shards").mkdir()
+    shard = tmp_path / "shards" / "empty.c4az"
+    shard.write_bytes(HEADER.pack(MAGIC, 1, 0, 0))
+    manifest = {
+        "schema_version": current_version_info()["dataset_schema_version"],
+        "num_games": 0,
+        "num_samples": 0,
+        "shard_paths": ["shards/empty.c4az"],
+        "version": current_version_info(),
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ReplayBuffer requires at least one sample"):
+        ReplayBuffer.from_manifests([manifest_path], replay_games=1)
+
+
+def test_replay_surfaces_missing_shard_artifact(tmp_path):
+    manifest = {
+        "schema_version": current_version_info()["dataset_schema_version"],
+        "num_games": 1,
+        "num_samples": 1,
+        "shard_paths": ["shards/missing.c4az"],
+        "version": current_version_info(),
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError):
+        ReplayBuffer.from_manifests([manifest_path], replay_games=1)

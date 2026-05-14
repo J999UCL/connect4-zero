@@ -4,6 +4,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 
 namespace c4zero::data {
@@ -17,6 +19,49 @@ void write_value(std::ofstream& out, const T& value) {
 template <typename T>
 void read_value(std::ifstream& in, T& value) {
   in.read(reinterpret_cast<char*>(&value), sizeof(T));
+}
+
+std::string json_escape(const std::string& value) {
+  std::ostringstream out;
+  out << '"';
+  for (char ch : value) {
+    switch (ch) {
+      case '"':
+        out << "\\\"";
+        break;
+      case '\\':
+        out << "\\\\";
+        break;
+      case '\b':
+        out << "\\b";
+        break;
+      case '\f':
+        out << "\\f";
+        break;
+      case '\n':
+        out << "\\n";
+        break;
+      case '\r':
+        out << "\\r";
+        break;
+      case '\t':
+        out << "\\t";
+        break;
+      default:
+        if (static_cast<unsigned char>(ch) < 0x20) {
+          out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+              << static_cast<int>(static_cast<unsigned char>(ch));
+        } else {
+          out << ch;
+        }
+    }
+  }
+  out << '"';
+  return out.str();
+}
+
+const char* json_bool(bool value) {
+  return value ? "true" : "false";
 }
 
 }  // namespace
@@ -103,8 +148,7 @@ void write_manifest(
     const std::string& shard_path,
     std::uint64_t num_games,
     std::uint64_t num_samples,
-    const std::string& model_checkpoint,
-    const std::string& config_json) {
+    const SelfPlayManifestConfig& config) {
   const auto parent = std::filesystem::path(path).parent_path();
   if (!parent.empty()) {
     std::filesystem::create_directories(parent);
@@ -117,9 +161,21 @@ void write_manifest(
   out << "  \"schema_version\": \"" << c4zero::version::version_field("dataset_schema_version") << "\",\n";
   out << "  \"num_games\": " << num_games << ",\n";
   out << "  \"num_samples\": " << num_samples << ",\n";
-  out << "  \"model_checkpoint\": \"" << model_checkpoint << "\",\n";
-  out << "  \"shard_paths\": [\"" << shard_path << "\"],\n";
-  out << "  \"config\": " << config_json << ",\n";
+  out << "  \"model_checkpoint\": " << json_escape(config.model_checkpoint) << ",\n";
+  out << "  \"shard_paths\": [" << json_escape(shard_path) << "],\n";
+  out << "  \"config\": {\n";
+  out << "    \"model_checkpoint\": " << json_escape(config.model_checkpoint) << ",\n";
+  out << "    \"device\": " << json_escape(config.device) << ",\n";
+  out << "    \"simulations_per_move\": " << config.simulations_per_move << ",\n";
+  out << "    \"c_base\": " << config.c_base << ",\n";
+  out << "    \"c_init\": " << config.c_init << ",\n";
+  out << "    \"root_dirichlet_alpha\": " << config.root_dirichlet_alpha << ",\n";
+  out << "    \"root_exploration_fraction\": " << config.root_exploration_fraction << ",\n";
+  out << "    \"temperature_sampling_plies\": " << config.temperature_sampling_plies << ",\n";
+  out << "    \"add_root_noise\": " << json_bool(config.add_root_noise) << ",\n";
+  out << "    \"seed\": " << config.seed << ",\n";
+  out << "    \"git_commit\": " << json_escape(config.git_commit) << "\n";
+  out << "  },\n";
   out << "  \"version\": " << c4zero::version::current_version_json() << "\n";
   out << "}\n";
 }

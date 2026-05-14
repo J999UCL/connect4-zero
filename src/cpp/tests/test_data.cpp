@@ -2,6 +2,9 @@
 #include "test_support.hpp"
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 
 using namespace c4zero;
 
@@ -28,5 +31,18 @@ int main() {
   C4ZERO_CHECK_EQ(replay.num_games(), 2);
   C4ZERO_CHECK_EQ(replay.num_samples(), 3);
   C4ZERO_CHECK_EQ(replay.sample_batch(4, 1).size(), 4);
+
+  const auto manifest_path = std::filesystem::temp_directory_path() / "c4zero-test-manifest.json";
+  data::SelfPlayManifestConfig manifest_config;
+  manifest_config.model_checkpoint = "model\"with-quote.ts";
+  manifest_config.device = "cpu";
+  manifest_config.simulations_per_move = 800;
+  manifest_config.git_commit = "abc123";
+  data::write_manifest(manifest_path.string(), "shards/shard-000000.c4az", 1, 1, manifest_config);
+  std::ifstream manifest(manifest_path);
+  const std::string text((std::istreambuf_iterator<char>(manifest)), std::istreambuf_iterator<char>());
+  C4ZERO_CHECK(text.find("\"simulations_per_move\": 800") != std::string::npos);
+  C4ZERO_CHECK(text.find("model\\\"with-quote.ts") != std::string::npos);
+  C4ZERO_CHECK(text.find("\"git_commit\": \"abc123\"") != std::string::npos);
   return 0;
 }

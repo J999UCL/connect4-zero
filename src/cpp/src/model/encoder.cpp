@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 
 namespace c4zero::model {
 
@@ -42,14 +43,26 @@ search::Evaluation TorchScriptEvaluator::evaluate(const core::Position& position
   torch::Tensor values;
   if (output.isTuple()) {
     auto elements = output.toTuple()->elements();
+    if (elements.size() != 2) {
+      throw std::runtime_error("TorchScript model must return exactly (policy_logits, value)");
+    }
     logits = elements.at(0).toTensor();
     values = elements.at(1).toTensor();
   } else {
     throw std::runtime_error("TorchScript model must return (policy_logits, value)");
   }
+  if (logits.dim() != 2 || logits.size(0) != 1 || logits.size(1) != core::kNumActions) {
+    throw std::runtime_error("TorchScript policy logits must have shape [1,16]");
+  }
+  if (values.numel() != 1) {
+    throw std::runtime_error("TorchScript value output must contain one scalar for batch size 1");
+  }
   logits = logits.squeeze(0).to(torch::kCPU);
   values = values.to(torch::kCPU).reshape({-1});
   const float value = values[0].item<float>();
+  if (!std::isfinite(value) || value < -1.0001f || value > 1.0001f) {
+    throw std::runtime_error("TorchScript value output must be finite and in [-1,1]");
+  }
   search::Evaluation evaluation;
   evaluation.value = value;
   std::array<float, core::kNumActions> raw{};

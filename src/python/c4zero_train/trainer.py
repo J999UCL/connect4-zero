@@ -40,6 +40,17 @@ def batch_targets(samples, device: torch.device | str) -> tuple[torch.Tensor, to
     return policy, value
 
 
+def l2_regularization_value(model: AlphaZeroNet, optimizer: torch.optim.Optimizer) -> float:
+    weight_decay = max(float(group.get("weight_decay", 0.0)) for group in optimizer.param_groups)
+    if weight_decay == 0.0:
+        return 0.0
+    total = torch.zeros((), dtype=torch.float32, device=next(model.parameters()).device)
+    for parameter in model.parameters():
+        if parameter.requires_grad:
+            total = total + parameter.detach().pow(2).sum()
+    return float((weight_decay * total).cpu())
+
+
 def train_step(
     model: AlphaZeroNet,
     optimizer: torch.optim.Optimizer,
@@ -52,9 +63,17 @@ def train_step(
     optimizer.zero_grad(set_to_none=True)
     policy_logits, values = model(inputs)
     loss, breakdown = alpha_zero_loss(policy_logits, values, target_policy, target_value)
+    l2_value = l2_regularization_value(model, optimizer)
     loss.backward()
     optimizer.step()
-    return breakdown
+    return LossBreakdown(
+        total=breakdown.total,
+        policy=breakdown.policy,
+        value=breakdown.value,
+        l2_regularization=l2_value,
+        paper_total_loss=breakdown.total + l2_value,
+        optimized_total=breakdown.total,
+    )
 
 
 def train_steps(

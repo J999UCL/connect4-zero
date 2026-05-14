@@ -1,8 +1,11 @@
+import json
+
 import numpy as np
 import torch
+import pytest
 
 from c4zero_tools.datasets import Sample
-from c4zero_train.checkpoint import load_checkpoint, save_checkpoint
+from c4zero_train.checkpoint import load_checkpoint, restore_optimizer_and_scheduler, save_checkpoint
 from c4zero_train.export import export_torchscript_model
 from c4zero_train.model import create_model
 from c4zero_train.trainer import TrainConfig, make_optimizer, make_scheduler, train_step
@@ -29,6 +32,9 @@ def test_train_step_changes_weights_and_checkpoint_round_trip(tmp_path):
     before = {name: parameter.detach().clone() for name, parameter in model.named_parameters()}
     breakdown = train_step(model, optimizer, samples())
     assert breakdown.total > 0.0
+    assert breakdown.optimized_total == breakdown.total
+    assert breakdown.l2_regularization > 0.0
+    assert breakdown.paper_total_loss > breakdown.total
     assert breakdown.policy > 0.0
     assert breakdown.value >= 0.0
     assert any(not torch.equal(before[name], parameter.detach()) for name, parameter in model.named_parameters())
@@ -44,6 +50,25 @@ def test_train_step_changes_weights_and_checkpoint_round_trip(tmp_path):
         actual = loaded(x)
     assert torch.allclose(expected[0], actual[0])
     assert torch.allclose(expected[1], actual[1])
+
+    loaded_optimizer = make_optimizer(loaded, TrainConfig(batch_size=2, learning_rate=0.01))
+    loaded_scheduler = make_scheduler(loaded_optimizer)
+    restore_optimizer_and_scheduler(payload, loaded_optimizer, loaded_scheduler)
+    assert loaded_optimizer.state_dict()["state"]
+    assert loaded_scheduler.state_dict()["last_epoch"] == scheduler.state_dict()["last_epoch"]
+
+
+def test_checkpoint_rejects_mutated_version_metadata(tmp_path):
+    model = create_model("tiny")
+    optimizer = make_optimizer(model, TrainConfig(batch_size=2, learning_rate=0.01))
+    scheduler = make_scheduler(optimizer)
+    save_checkpoint(tmp_path, model, optimizer, scheduler, step=1, epoch=0, replay_manifests=[])
+    metadata_path = tmp_path / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["version"]["encoder_version"] = "999.0.0"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="encoder_version mismatch"):
+        load_checkpoint(tmp_path)
 
 
 def test_torchscript_export_matches_eager(tmp_path):

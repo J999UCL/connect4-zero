@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 namespace c4zero::bots {
@@ -57,6 +58,16 @@ int candidate_score(const core::Position& position, core::Action action) {
   return score;
 }
 
+std::vector<core::Action> tactically_safe_actions(const core::Position& position) {
+  std::vector<core::Action> safe;
+  for (core::Action action : ordered_legal_actions(position)) {
+    if (opponent_winning_replies_after(position, action) == 0) {
+      safe.push_back(action);
+    }
+  }
+  return safe.empty() ? ordered_legal_actions(position) : safe;
+}
+
 int negamax(const core::Position& position, int depth, int ply_distance, int alpha, int beta) {
   if (const auto terminal = position.terminal_value()) {
     if (*terminal > 0.0f) {
@@ -84,6 +95,24 @@ int negamax(const core::Position& position, int depth, int ply_distance, int alp
 }
 
 }  // namespace
+
+double BotMatchResult::first_score_rate() const {
+  if (games == 0) {
+    return 0.0;
+  }
+  return (static_cast<double>(first_wins) + 0.5 * static_cast<double>(draws)) / static_cast<double>(games);
+}
+
+std::string BotMatchResult::summary() const {
+  std::ostringstream out;
+  out << "games=" << games
+      << " first_wins=" << first_wins
+      << " second_wins=" << second_wins
+      << " draws=" << draws
+      << " score_rate=" << first_score_rate()
+      << " avg_plies=" << (games == 0 ? 0.0 : static_cast<double>(total_plies) / games);
+  return out.str();
+}
 
 const std::array<core::Action, core::kNumActions>& center_order() {
   static const std::array<core::Action, core::kNumActions> order{5, 6, 9, 10, 1, 2, 4, 7, 8, 11, 13, 14, 0, 3, 12, 15};
@@ -207,9 +236,14 @@ std::string OnePlyTacticalBot::name() const {
 }
 
 core::Action LineScoreBot::select_move(const core::Position& position) const {
+  const auto wins = immediate_winning_actions(position);
+  if (!wins.empty()) {
+    return first_by_center_order(wins);
+  }
+
   int best_score = std::numeric_limits<int>::min();
   core::Action best_action = -1;
-  for (core::Action action : ordered_legal_actions(position)) {
+  for (core::Action action : tactically_safe_actions(position)) {
     const int score = candidate_score(position, action);
     if (score > best_score) {
       best_score = score;
@@ -234,7 +268,7 @@ core::Action ForkThreatBot::select_move(const core::Position& position) const {
 
   int best_score = std::numeric_limits<int>::min();
   core::Action best_action = -1;
-  for (core::Action action : ordered_legal_actions(position)) {
+  for (core::Action action : tactically_safe_actions(position)) {
     int score = candidate_score(position, action);
     const int own_forks = playable_threat_count_after(position, action);
     if (own_forks >= 2) {
@@ -294,6 +328,43 @@ std::unique_ptr<Bot> make_bot(const std::string& name) {
 
 std::vector<std::string> bot_names() {
   return {"first-legal", "center-order", "one-ply-tactical", "line-score", "fork-threat", "minimax3", "minimax5"};
+}
+
+BotMatchResult play_bot_match(
+    const Bot& first,
+    const Bot& second,
+    int games,
+    bool alternate_starts) {
+  BotMatchResult result;
+  result.games = games;
+  for (int game = 0; game < games; ++game) {
+    core::Position position = core::Position::empty();
+    const bool first_controls_initial = !alternate_starts || game % 2 == 0;
+    while (!position.is_terminal()) {
+      const bool initial_player_to_move = (position.ply % 2 == 0);
+      const bool first_to_move = first_controls_initial == initial_player_to_move;
+      const Bot& bot = first_to_move ? first : second;
+      const core::Action action = bot.select_move(position);
+      if (!position.is_legal(action)) {
+        throw std::runtime_error(bot.name() + " selected illegal action");
+      }
+      position = position.play(action);
+    }
+    result.total_plies += position.ply;
+    const float terminal = *position.terminal_value();
+    if (terminal == 0.0f) {
+      result.draws += 1;
+      continue;
+    }
+    const bool initial_player_won = (position.ply % 2 == 1);
+    const bool first_won = first_controls_initial == initial_player_won;
+    if (first_won) {
+      result.first_wins += 1;
+    } else {
+      result.second_wins += 1;
+    }
+  }
+  return result;
 }
 
 }  // namespace c4zero::bots

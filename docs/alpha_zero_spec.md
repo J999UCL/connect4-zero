@@ -1,7 +1,7 @@
 # C4Zero AlphaZero Specification
 
 The active implementation is split across C++ and Python/PyTorch. C++ owns game
-rules, PUCT MCTS, self-play, arena, and TorchScript inference. Python/PyTorch
+rules, PUCT MCTS, self-play, checkpoint arena, heuristic baselines, and TorchScript inference. Python/PyTorch
 owns the canonical model definition, training loop, checkpointing, replay
 loading, and TorchScript export. Archived Python/Rust prototypes are reference
 material only. This project follows the published AlphaZero/AlphaGo Zero
@@ -28,6 +28,7 @@ C(s) = log((1 + N(s) + 19652) / 19652) + 1.25
 - `Q(s,a)` is from the parent perspective, so child mean values are sign-flipped.
 - Terminal children bypass neural inference and back up exact values.
 - Self-play adds Dirichlet noise at the root only.
+- Arena evaluation disables root noise and chooses greedily by root visit counts.
 
 ## Training
 
@@ -36,7 +37,7 @@ C(s) = log((1 + N(s) + 19652) / 19652) + 1.25
   side-to-move perspective.
 - Python samples uniformly over positions from the most recent replay-window
   games written by C++.
-- Training uses SGD with momentum and L2 regularization. The loss is:
+- Training uses SGD with momentum and L2 regularization. The paper objective is:
 
 ```text
 (z - v)^2 - pi^T log(p) + 1e-4 ||theta||^2

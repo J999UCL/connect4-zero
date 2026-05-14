@@ -40,7 +40,22 @@ int main() {
   }
   C4ZERO_CHECK_EQ(visits, 32);
   C4ZERO_CHECK(tree.max_depth() >= 1);
+  const int before_advance_nodes = tree.node_count();
   C4ZERO_CHECK(tree.advance(3));
   C4ZERO_CHECK(tree.root().position.is_terminal());
+  C4ZERO_CHECK(tree.node_count() < before_advance_nodes);
+
+  search::PuctConfig noise_config;
+  noise_config.simulations_per_move = 0;
+  noise_config.seed = 11;
+  search::PuctMcts noisy(noise_config);
+  search::UniformEvaluator uniform;
+  auto noise_tree = noisy.make_tree(core::Position::empty());
+  (void)noisy.search(noise_tree, uniform, true, 1.0);
+  const auto priors_after_first_noise = noise_tree.root().edges;
+  (void)noisy.search(noise_tree, uniform, true, 1.0);
+  for (core::Action action = 0; action < core::kNumActions; ++action) {
+    C4ZERO_CHECK_EQ(noise_tree.root().edges[action].prior, priors_after_first_noise[action].prior);
+  }
   return 0;
 }

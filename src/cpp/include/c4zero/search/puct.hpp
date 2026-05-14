@@ -60,6 +60,7 @@ struct Node {
   std::array<int, core::kNumActions> children{};
   std::array<EdgeStats, core::kNumActions> edges{};
   bool expanded = false;
+  bool root_noise_applied = false;
   std::optional<float> terminal_value;
 };
 

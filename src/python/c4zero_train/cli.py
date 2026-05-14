@@ -7,7 +7,7 @@ from pathlib import Path
 
 import torch
 
-from c4zero_train.checkpoint import save_checkpoint
+from c4zero_train.checkpoint import load_checkpoint, restore_optimizer_and_scheduler, save_checkpoint
 from c4zero_train.export import export_checkpoint, export_torchscript_model
 from c4zero_train.model import create_model, count_parameters
 from c4zero_train.replay import ReplayBuffer, ReplayConfig
@@ -42,28 +42,48 @@ def export_main(argv: list[str] | None = None) -> int:
 
 def train_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train c4zero PyTorch model from C++ self-play shards.")
-    parser.add_argument("--preset", choices=["tiny", "small", "medium"], default="small")
+    parser.add_argument("--preset", choices=["tiny", "small", "medium"])
     parser.add_argument("--manifest", action="append", required=True)
     parser.add_argument("--steps", type=int, default=1)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--resume", type=Path)
     args = parser.parse_args(argv)
 
-    replay_config = ReplayConfig.for_preset(args.preset)
+    payload = None
+    if args.resume is not None:
+        model, payload = load_checkpoint(args.resume, device=args.device)
+        if args.preset is not None and args.preset != model.config.preset:
+            raise ValueError(f"--preset {args.preset} does not match resumed checkpoint preset {model.config.preset}")
+        preset = model.config.preset
+    else:
+        preset = args.preset or "small"
+        model = create_model(preset).to(args.device)
+
+    replay_config = ReplayConfig.for_preset(preset)
     replay = ReplayBuffer.from_manifests(args.manifest, replay_config.replay_games)
-    model = create_model(args.preset).to(args.device)
     train_config = TrainConfig(batch_size=min(replay_config.batch_size, len(replay.samples)), seed=args.seed)
     optimizer = make_optimizer(model, train_config)
     scheduler = make_scheduler(optimizer)
+    start_step = 0
+    start_epoch = 0
+    if payload is not None:
+        restore_optimizer_and_scheduler(payload, optimizer, scheduler)
+        start_step = int(payload["step"])
+        start_epoch = int(payload["epoch"])
     losses = train_steps(model, replay, optimizer, scheduler, train_config, args.steps, device=args.device)
+    final_step = start_step + args.steps
     metrics = {
         "last_loss": losses[-1].total,
+        "last_optimized_loss": losses[-1].optimized_total,
+        "last_paper_total_loss": losses[-1].paper_total_loss,
         "last_policy_loss": losses[-1].policy,
         "last_value_loss": losses[-1].value,
+        "last_l2_regularization": losses[-1].l2_regularization,
         **replay.metadata(),
     }
-    save_checkpoint(args.out, model, optimizer, scheduler, step=args.steps, epoch=0, replay_manifests=args.manifest, metrics=metrics)
+    save_checkpoint(args.out, model, optimizer, scheduler, step=final_step, epoch=start_epoch, replay_manifests=args.manifest, metrics=metrics)
     export_torchscript_model(model, args.out / "inference.ts", device=args.device)
     print(json.dumps(metrics, indent=2))
     return 0

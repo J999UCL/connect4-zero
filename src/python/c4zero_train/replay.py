@@ -40,9 +40,15 @@ class ReplayBuffer:
     @classmethod
     def from_manifests(cls, manifests: list[str | Path], replay_games: int) -> "ReplayBuffer":
         by_game: dict[tuple[int, int], list[Sample]] = {}
+        previous_created_at: str | None = None
         for manifest_index, manifest_path in enumerate(manifests):
             manifest_path = Path(manifest_path)
             manifest = validate_manifest(manifest_path)
+            created_at = manifest.get("created_at")
+            if created_at is not None:
+                if previous_created_at is not None and created_at < previous_created_at:
+                    raise ValueError("manifest created_at values must be passed oldest-to-newest")
+                previous_created_at = created_at
             root = manifest_path.parent
             for shard in manifest["shard_paths"]:
                 shard_path = Path(shard)

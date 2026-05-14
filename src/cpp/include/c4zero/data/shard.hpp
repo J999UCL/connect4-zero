@@ -37,6 +37,20 @@ struct ShardHeader {
   std::uint64_t sample_count = 0;
 };
 
+struct SelfPlayManifestConfig {
+  std::string model_checkpoint;
+  std::string device = "cpu";
+  int simulations_per_move = 800;
+  double c_base = 19652.0;
+  double c_init = 1.25;
+  double root_dirichlet_alpha = 0.625;
+  double root_exploration_fraction = 0.25;
+  int temperature_sampling_plies = 30;
+  bool add_root_noise = true;
+  std::uint64_t seed = 1;
+  std::string git_commit;
+};
+
 void write_shard(const std::string& path, const std::vector<SelfPlaySample>& samples);
 [[nodiscard]] std::vector<SelfPlaySample> read_shard(const std::string& path);
 void write_manifest(
@@ -44,8 +58,7 @@ void write_manifest(
     const std::string& shard_path,
     std::uint64_t num_games,
     std::uint64_t num_samples,
-    const std::string& model_checkpoint,
-    const std::string& config_json);
+    const SelfPlayManifestConfig& config);
 
 class ReplayBuffer {
  public:

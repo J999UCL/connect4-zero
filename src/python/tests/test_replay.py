@@ -5,7 +5,7 @@ from c4zero_tools.version import current_version_info
 from c4zero_train.replay import ReplayBuffer
 
 
-def write_manifest_with_one_sample(root, value):
+def write_manifest_with_one_sample(root, value, created_at=None):
     (root / "shards").mkdir(parents=True)
     payload = bytearray()
     payload += HEADER.pack(MAGIC, 1, 0, 1)
@@ -21,6 +21,8 @@ def write_manifest_with_one_sample(root, value):
         "shard_paths": ["shards/shard-000000.c4az"],
         "version": current_version_info(),
     }
+    if created_at is not None:
+        manifest["created_at"] = created_at
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root / "manifest.json"
 
@@ -32,3 +34,23 @@ def test_replay_treats_same_game_ids_in_different_manifests_as_different_games(t
     assert replay.metadata()["num_games"] == 2
     assert len(replay.samples) == 2
     assert sorted(sample.value for sample in replay.samples) == [-1.0, 1.0]
+
+
+def test_replay_keeps_latest_manifest_ordered_games(tmp_path):
+    first = write_manifest_with_one_sample(tmp_path / "first", 1.0, "2026-05-14T00:00:00Z")
+    second = write_manifest_with_one_sample(tmp_path / "second", -1.0, "2026-05-14T01:00:00Z")
+    replay = ReplayBuffer.from_manifests([first, second], replay_games=1)
+    assert replay.metadata()["num_games"] == 1
+    assert len(replay.samples) == 1
+    assert replay.samples[0].value == -1.0
+
+
+def test_replay_rejects_decreasing_manifest_timestamps(tmp_path):
+    first = write_manifest_with_one_sample(tmp_path / "first", 1.0, "2026-05-14T01:00:00Z")
+    second = write_manifest_with_one_sample(tmp_path / "second", -1.0, "2026-05-14T00:00:00Z")
+    try:
+        ReplayBuffer.from_manifests([first, second], replay_games=2)
+    except ValueError as error:
+        assert "oldest-to-newest" in str(error)
+    else:
+        raise AssertionError("expected replay chronology validation to fail")

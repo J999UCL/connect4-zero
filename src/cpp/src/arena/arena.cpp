@@ -1,48 +1,98 @@
 #include "c4zero/arena/arena.hpp"
 
+#include "c4zero/core/position.hpp"
+#include "c4zero/model/torchscript.hpp"
+#include "c4zero/search/puct.hpp"
+
 #include <sstream>
 #include <stdexcept>
+#include <torch/torch.h>
 
 namespace c4zero::arena {
+namespace {
 
-double ArenaResult::first_score_rate() const {
+torch::Device parse_device(const std::string& device) {
+  if (device == "cuda") {
+    return torch::Device(torch::kCUDA);
+  }
+  if (device == "cpu") {
+    return torch::Device(torch::kCPU);
+  }
+  throw std::invalid_argument("unsupported arena device: " + device);
+}
+
+}  // namespace
+
+double ArenaResult::model_a_score_rate() const {
   if (games == 0) {
     return 0.0;
   }
-  return (static_cast<double>(first_wins) + 0.5 * static_cast<double>(draws)) / static_cast<double>(games);
+  return (static_cast<double>(model_a_wins) + 0.5 * static_cast<double>(draws)) / static_cast<double>(games);
 }
 
 std::string ArenaResult::summary() const {
   std::ostringstream out;
   out << "games=" << games
-      << " first_wins=" << first_wins
-      << " second_wins=" << second_wins
+      << " model_a_wins=" << model_a_wins
+      << " model_b_wins=" << model_b_wins
       << " draws=" << draws
-      << " score_rate=" << first_score_rate()
+      << " model_a_score_rate=" << model_a_score_rate()
       << " avg_plies=" << (games == 0 ? 0.0 : static_cast<double>(total_plies) / games);
   return out.str();
 }
 
-ArenaResult play_bot_match(
-    const bots::Bot& first,
-    const bots::Bot& second,
-    int games,
-    bool alternate_starts) {
+ArenaResult play_checkpoint_match(const ArenaConfig& config) {
+  if (config.model_a.empty() || config.model_b.empty()) {
+    throw std::invalid_argument("arena requires --model-a and --model-b");
+  }
+  if (config.games < 0) {
+    throw std::invalid_argument("arena games must be non-negative");
+  }
+  if (config.simulations <= 0) {
+    throw std::invalid_argument("arena simulations must be positive");
+  }
+
+  const torch::Device device = parse_device(config.device);
+  model::TorchScriptEvaluator evaluator_a(config.model_a, device);
+  model::TorchScriptEvaluator evaluator_b(config.model_b, device);
+
+  search::PuctConfig mcts_config;
+  mcts_config.simulations_per_move = config.simulations;
+  mcts_config.seed = config.seed;
+  search::PuctMcts mcts_a(mcts_config);
+  mcts_config.seed = config.seed ^ 0x9E3779B97F4A7C15ULL;
+  search::PuctMcts mcts_b(mcts_config);
+
   ArenaResult result;
-  result.games = games;
-  for (int game = 0; game < games; ++game) {
+  result.games = config.games;
+  for (int game = 0; game < config.games; ++game) {
     core::Position position = core::Position::empty();
-    const bool first_controls_initial = !alternate_starts || game % 2 == 0;
+    search::SearchTree tree_a(position);
+    search::SearchTree tree_b(position);
+    const bool a_controls_initial = (game % 2 == 0);
+
     while (!position.is_terminal()) {
       const bool initial_player_to_move = (position.ply % 2 == 0);
-      const bool first_to_move = first_controls_initial == initial_player_to_move;
-      const bots::Bot& bot = first_to_move ? first : second;
-      const core::Action action = bot.select_move(position);
-      if (!position.is_legal(action)) {
-        throw std::runtime_error(bot.name() + " selected illegal action");
+      const bool a_to_move = a_controls_initial == initial_player_to_move;
+      search::PuctMcts& mcts = a_to_move ? mcts_a : mcts_b;
+      search::Evaluator& evaluator = a_to_move
+          ? static_cast<search::Evaluator&>(evaluator_a)
+          : static_cast<search::Evaluator&>(evaluator_b);
+      search::SearchTree& active_tree = a_to_move ? tree_a : tree_b;
+
+      search::SearchResult search = mcts.search(active_tree, evaluator, false, 0.0);
+      if (search.selected_action < 0 || !position.is_legal(search.selected_action)) {
+        throw std::runtime_error("arena checkpoint selected illegal action");
       }
-      position = position.play(action);
+      position = position.play(search.selected_action);
+      if (!tree_a.advance(search.selected_action)) {
+        tree_a = search::SearchTree(position);
+      }
+      if (!tree_b.advance(search.selected_action)) {
+        tree_b = search::SearchTree(position);
+      }
     }
+
     result.total_plies += position.ply;
     const float terminal = *position.terminal_value();
     if (terminal == 0.0f) {
@@ -50,11 +100,11 @@ ArenaResult play_bot_match(
       continue;
     }
     const bool initial_player_won = (position.ply % 2 == 1);
-    const bool first_won = first_controls_initial == initial_player_won;
-    if (first_won) {
-      result.first_wins += 1;
+    const bool model_a_won = a_controls_initial == initial_player_won;
+    if (model_a_won) {
+      result.model_a_wins += 1;
     } else {
-      result.second_wins += 1;
+      result.model_b_wins += 1;
     }
   }
   return result;

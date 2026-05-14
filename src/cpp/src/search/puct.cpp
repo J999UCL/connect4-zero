@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
@@ -127,9 +128,31 @@ bool SearchTree::advance(core::Action action) {
   if (child < 0) {
     return false;
   }
-  root_index_ = child;
-  nodes_[root_index_].parent = -1;
-  nodes_[root_index_].parent_action = -1;
+  std::vector<Node> rebuilt;
+  std::function<int(int, int, core::Action)> copy_subtree =
+      [&](int old_index, int parent, core::Action parent_action) {
+        Node node = nodes_.at(old_index);
+        const auto old_children = node.children;
+        node.children.fill(-1);
+        node.parent = parent;
+        node.parent_action = parent_action;
+        if (parent < 0) {
+          node.root_noise_applied = false;
+        }
+        const int new_index = static_cast<int>(rebuilt.size());
+        rebuilt.push_back(node);
+        for (core::Action child_action = 0; child_action < core::kNumActions; ++child_action) {
+          const int old_child = old_children[child_action];
+          if (old_child >= 0) {
+            rebuilt[new_index].children[child_action] =
+                copy_subtree(old_child, new_index, child_action);
+          }
+        }
+        return new_index;
+      };
+  copy_subtree(child, -1, -1);
+  nodes_ = std::move(rebuilt);
+  root_index_ = 0;
   return true;
 }
 
@@ -147,7 +170,7 @@ SearchResult PuctMcts::search(SearchTree& tree, Evaluator& evaluator, bool add_n
   if (!tree.root().expanded && !tree.root().terminal_value.has_value()) {
     expand_node(tree, tree.root_index(), evaluator);
   }
-  if (add_noise && tree.root().expanded) {
+  if (add_noise && tree.root().expanded && !tree.root().root_noise_applied) {
     add_root_noise(tree.root());
   }
 
@@ -252,6 +275,7 @@ void PuctMcts::add_root_noise(Node& root) {
     const double eta = noise[i] / sum;
     edge.prior = static_cast<float>((1.0 - config_.root_exploration_fraction) * edge.prior + config_.root_exploration_fraction * eta);
   }
+  root.root_noise_applied = true;
 }
 
 core::Action PuctMcts::select_action(const Node& node) const {

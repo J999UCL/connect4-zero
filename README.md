@@ -4,7 +4,7 @@ Clean AlphaZero for gravity-based 4x4x4 Connect Four.
 
 The active runtime is split intentionally:
 
-- C++ owns game rules, PUCT MCTS, heuristic bots, arena, self-play, and
+- C++ owns game rules, PUCT MCTS, neural arena, heuristic bot baselines, self-play, and
   TorchScript inference during search.
 - Python/PyTorch owns model definition, training, checkpointing, replay loading,
   and TorchScript export.
@@ -41,7 +41,8 @@ After building:
 ```bash
 build/c4zero/c4zero version --json
 build/c4zero/c4zero bots
-build/c4zero/c4zero arena --bot-a center --bot-b tactical --games 20
+build/c4zero/c4zero botmatch --bot-a center --bot-b tactical --games 20
+build/c4zero/c4zero arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 20 --simulations 800
 build/c4zero/c4zero selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --out runs/c4zero-smoke
 ```
 
@@ -69,7 +70,7 @@ The active stack follows AlphaZero mechanics:
 - replay-window sampling by recent games
 - SGD with momentum and L2 weight decay
 - root Dirichlet noise during self-play only
-- deterministic arena/eval by default
+- deterministic checkpoint arena/eval by default
 
 Version compatibility is centralized in `version_manifest.json`. Datasets,
 checkpoints, and run manifests must carry the version snapshot so schema,

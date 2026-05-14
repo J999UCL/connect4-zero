@@ -1,4 +1,8 @@
-use std::{path::PathBuf, time::Instant};
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Instant,
+};
 
 use anyhow::Result;
 use c4_cli::{AnyEvaluator, make_search_config, parse_model_spec};
@@ -36,6 +40,9 @@ fn main() -> Result<()> {
         .build()?;
     let started = Instant::now();
     let chunks = make_chunks(args.games, args.workers.max(1));
+    let completed_games = AtomicUsize::new(0);
+    let completed_samples = AtomicUsize::new(0);
+    let completed_plies = AtomicUsize::new(0);
     let games: Vec<_> = pool.install(|| {
         chunks
             .into_par_iter()
@@ -56,6 +63,26 @@ fn main() -> Result<()> {
                             args.seed.wrapping_add(10_000 + game_index as u64),
                             args.temperature_cutoff_ply,
                         )
+                    })
+                    .inspect(|game| {
+                        let games_done = completed_games.fetch_add(1, Ordering::Relaxed) + 1;
+                        let samples_done =
+                            completed_samples.fetch_add(game.samples.len(), Ordering::Relaxed)
+                                + game.samples.len();
+                        let plies_done =
+                            completed_plies.fetch_add(game.plies, Ordering::Relaxed) + game.plies;
+                        if games_done == args.games || games_done % 100 == 0 {
+                            let elapsed = started.elapsed().as_secs_f64().max(1e-9);
+                            eprintln!(
+                                "progress games={}/{} samples={} avg_plies={:.2} games_per_sec={:.3} samples_per_sec={:.3}",
+                                games_done,
+                                args.games,
+                                samples_done,
+                                plies_done as f64 / games_done.max(1) as f64,
+                                games_done as f64 / elapsed,
+                                samples_done as f64 / elapsed,
+                            );
+                        }
                     })
                     .collect::<Vec<_>>()
             })

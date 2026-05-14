@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "description": "Command-shaped operational E2E suite catalog for the active C4Zero package and CLI names.",
-  "repo_root": "/Users/jeetthakwani/dev/ml/RL",
+  "repo_root": ".",
   "active_entrypoints": {
     "cpp_binary": "build/c4zero/c4zero",
     "pythonpath": "src/python",

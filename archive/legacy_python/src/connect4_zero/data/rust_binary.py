@@ -45,8 +45,7 @@ class RustBinarySelfPlayDataset(Dataset[Dict[str, torch.Tensor]]):
         self.apply_symmetries = bool(apply_symmetries)
         self._permutations = make_symmetry_permutations(device="cpu")
         self._cumulative_counts = self._make_cumulative_counts()
-        self._cached_shard_index = -1
-        self._cached_shard: RustShard | None = None
+        self._cached_shards: dict[int, RustShard] = {}
 
     def __len__(self) -> int:
         multiplier = 8 if self.apply_symmetries else 1
@@ -116,12 +115,10 @@ class RustBinarySelfPlayDataset(Dataset[Dict[str, torch.Tensor]]):
         return shard_index, local_index
 
     def _load_shard(self, shard_index: int) -> RustShard:
-        if shard_index != self._cached_shard_index:
+        if shard_index not in self._cached_shards:
             path = self.root_dir / self.records[shard_index]["path"]
-            self._cached_shard = read_rust_shard(path)
-            self._cached_shard_index = shard_index
-        assert self._cached_shard is not None
-        return self._cached_shard
+            self._cached_shards[shard_index] = read_rust_shard(path)
+        return self._cached_shards[shard_index]
 
     def _apply_symmetry(
         self,

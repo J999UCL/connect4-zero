@@ -9,21 +9,16 @@ description = "AlphaZero-style reinforcement learning for gravity-based 4x4x4 Co
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "numpy>=1.26",
-  "onnx>=1.16",
-  "safetensors>=0.4",
   "torch>=2.0",
-  "zstandard>=0.22",
 ]
 
 [project.scripts]
-connect4-benchmark-search = "connect4_zero.scripts.benchmark_search:main"
-connect4-benchmark-puct = "connect4_zero.scripts.benchmark_puct:main"
-connect4-arena-eval = "connect4_zero.scripts.arena_eval:main"
-connect4-export-onnx = "connect4_zero.scripts.export_onnx:main"
-connect4-generate-selfplay = "connect4_zero.scripts.generate_selfplay:main"
-connect4-play-terminal = "connect4_zero.scripts.play_terminal:main"
-connect4-run-training-loop = "connect4_zero.scripts.run_training_loop:main"
-connect4-train-resnet = "connect4_zero.scripts.train_resnet:main"
+c4az-selfplay = "c4az.cli:selfplay_main"
+c4az-train = "c4az.cli:train_main"
+c4az-loop = "c4az.cli:loop_main"
+c4az-arena = "c4az.cli:arena_main"
+c4az-inspect-checkpoint = "c4az.cli:inspect_checkpoint_main"
+c4az-generate-diagrams = "c4az.visualize:main"
 
 [project.optional-dependencies]
 dev = [

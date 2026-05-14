@@ -1,8 +1,11 @@
 import json
 from pathlib import Path
 
+import numpy as np
+import zstandard as zstd
+
 from connect4_zero.data import SelfPlayDataset
-from connect4_zero.model import Connect4ResNet3D, save_checkpoint
+from connect4_zero.model import Connect4ResNet3D, load_checkpoint, save_checkpoint
 from connect4_zero.scripts.arena_eval import main as arena_eval_main
 from connect4_zero.scripts.benchmark_search import main as benchmark_main
 from connect4_zero.scripts.benchmark_puct import main as benchmark_puct_main
@@ -260,6 +263,66 @@ def test_train_resnet_cli_dry_run(tmp_path: Path) -> None:
     assert list((tmp_path / "train" / "logs").glob("train_resnet-*.log"))
 
 
+def test_train_resnet_cli_accepts_rust_binary_dataset(tmp_path: Path) -> None:
+    manifest = _write_tiny_rust_dataset(tmp_path / "rust_data")
+
+    exit_code = train_resnet_main(
+        [
+            "--manifest",
+            str(manifest),
+            "--dataset-format",
+            "rust-binary",
+            "--device",
+            "cpu",
+            "--out",
+            str(tmp_path / "train_rust"),
+            "--batch-size",
+            "1",
+            "--max-new-steps",
+            "1",
+            "--num-workers",
+            "0",
+            "--quiet",
+        ]
+    )
+
+    assert exit_code == 0
+    assert list((tmp_path / "train_rust" / "checkpoints").glob("checkpoint-step-*.pt"))
+
+
+def test_train_resnet_cli_resumes_with_max_new_steps(tmp_path: Path) -> None:
+    manifest = _write_tiny_rust_dataset(tmp_path / "rust_data")
+    resume = tmp_path / "resume.pt"
+    save_checkpoint(resume, Connect4ResNet3D(), step=7, epoch=3)
+
+    exit_code = train_resnet_main(
+        [
+            "--manifest",
+            str(manifest),
+            "--dataset-format",
+            "rust-binary",
+            "--resume",
+            str(resume),
+            "--device",
+            "cpu",
+            "--out",
+            str(tmp_path / "train_resume"),
+            "--batch-size",
+            "1",
+            "--max-new-steps",
+            "1",
+            "--num-workers",
+            "0",
+            "--quiet",
+        ]
+    )
+
+    checkpoint = load_checkpoint(tmp_path / "train_resume" / "checkpoints" / "checkpoint-step-00000008.pt")
+    assert exit_code == 0
+    assert checkpoint.step == 8
+    assert checkpoint.epoch == 3
+
+
 def test_arena_eval_cli_writes_summary(tmp_path: Path) -> None:
     candidate = tmp_path / "candidate.pt"
     baseline = tmp_path / "baseline.pt"
@@ -350,3 +413,44 @@ def test_run_training_loop_dry_run_writes_plan(tmp_path: Path) -> None:
     assert "--paired-openings" in plan["rounds"][0]["arena_template"]
     assert "--add-root-noise" in plan["rounds"][0]["arena_template"]
     assert list((tmp_path / "runs" / "dry" / "logs").glob("run_training_loop-*.log"))
+
+
+def _write_tiny_rust_dataset(root: Path) -> Path:
+    shard_dir = root / "shards"
+    shard_dir.mkdir(parents=True)
+    shard_path = shard_dir / "shard-000000.c4zst"
+
+    payload = bytearray()
+    payload.extend(b"C4ZRS001")
+    payload.extend(np.array([1], dtype="<u8").tobytes())
+    payload.extend(np.array([1], dtype="<u8").tobytes())
+    payload.extend(np.array([0], dtype="<u8").tobytes())
+    heights = np.zeros((1, 16), dtype="u1")
+    heights[0, 0] = 1
+    payload.extend(heights.tobytes())
+    policy = np.zeros((1, 16), dtype="<f4")
+    policy[0, 4] = 1.0
+    payload.extend(policy.tobytes())
+    payload.extend(np.array([1], dtype="i1").tobytes())
+    visits = np.zeros((1, 16), dtype="<u4")
+    visits[0, 4] = 9
+    payload.extend(visits.tobytes())
+    q_values = np.zeros((1, 16), dtype="<f4")
+    q_values[0, 4] = 0.75
+    payload.extend(q_values.tobytes())
+    payload.extend(np.array([0xFFFE], dtype="<u2").tobytes())
+    payload.extend(np.array([4], dtype="u1").tobytes())
+    payload.extend(np.array([0], dtype="u1").tobytes())
+    shard_path.write_bytes(zstd.ZstdCompressor().compress(bytes(payload)))
+
+    manifest = {
+        "format": "connect4_zero.rust.selfplay.v1",
+        "format_version": 1,
+        "samples": 1,
+        "generator": "test",
+        "model_path": None,
+        "shards": [{"path": "shards/shard-000000.c4zst", "samples": 1, "compression": "zstd"}],
+    }
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return manifest_path

@@ -1,0 +1,145 @@
+{
+  "schema_version": "1.0",
+  "description": "Command-shaped operational E2E suite catalog for the active C4Zero package and CLI names.",
+  "repo_root": "/Users/jeetthakwani/dev/ml/RL",
+  "active_entrypoints": {
+    "cpp_binary": "build/c4zero/c4zero",
+    "pythonpath": "src/python",
+    "console_scripts": [
+      "c4zero-tools-version",
+      "c4zero-validate-dataset",
+      "c4zero-train",
+      "c4zero-export",
+      "c4zero-inspect-model"
+    ],
+    "python_modules": [
+      "c4zero_tools.version",
+      "c4zero_tools.datasets",
+      "c4zero_train.cli"
+    ]
+  },
+  "suites": [
+    {
+      "id": "cpu_smoke",
+      "cadence": "per-pr",
+      "uses_gpu": false,
+      "commands": [
+        "build/c4zero/c4zero version --json",
+        "build/c4zero/c4zero bots",
+        "build/c4zero/c4zero botmatch --bot-a center --bot-b tactical --games 2",
+        "uv run c4zero-tools-version --json",
+        "uv run c4zero-export --preset tiny --out checkpoints/e2e/cpu-smoke/bootstrap.ts --device cpu",
+        "build/c4zero/c4zero selfplay --model checkpoints/e2e/cpu-smoke/bootstrap.ts --games 1 --simulations 4 --seed 101 --device cpu --out runs/e2e/cpu-smoke/selfplay",
+        "uv run c4zero-validate-dataset runs/e2e/cpu-smoke/selfplay/manifest.json",
+        "uv run c4zero-train --preset tiny --manifest runs/e2e/cpu-smoke/selfplay/manifest.json --steps 1 --seed 101 --device cpu --out checkpoints/e2e/cpu-smoke/trained",
+        "uv run c4zero-export --checkpoint checkpoints/e2e/cpu-smoke/trained --out checkpoints/e2e/cpu-smoke/trained/inference-reexport.ts --device cpu",
+        "build/c4zero/c4zero arena --model-a checkpoints/e2e/cpu-smoke/trained/inference.ts --model-b checkpoints/e2e/cpu-smoke/trained/inference-reexport.ts --games 2 --simulations 4 --seed 101 --device cpu"
+      ],
+      "expected_artifacts": [
+        "runs/e2e/cpu-smoke/selfplay/manifest.json",
+        "runs/e2e/cpu-smoke/selfplay/shards/shard-000000.c4az",
+        "checkpoints/e2e/cpu-smoke/trained/model_state.pt",
+        "checkpoints/e2e/cpu-smoke/trained/metadata.json",
+        "checkpoints/e2e/cpu-smoke/trained/inference.ts"
+      ]
+    },
+    {
+      "id": "artifact_contract",
+      "cadence": "per-pr",
+      "uses_gpu": false,
+      "depends_on": [
+        "cpu_smoke"
+      ],
+      "contract_checks": {
+        "manifest_required_keys": [
+          "schema_version",
+          "num_games",
+          "num_samples",
+          "model_checkpoint",
+          "shard_paths",
+          "config",
+          "version"
+        ],
+        "version_required_keys": [
+          "dataset_schema_version",
+          "game_rules_version",
+          "encoder_version",
+          "action_mapping_version",
+          "symmetry_version"
+        ],
+        "shard_header": {
+          "magic": "C4AZSP01",
+          "schema_major": 1,
+          "schema_minor": 0
+        },
+        "torchscript_io": {
+          "input": "float32[1,2,4,4,4]",
+          "policy_logits": "float32[1,16]",
+          "value": "float32[1]"
+        }
+      }
+    },
+    {
+      "id": "deterministic_cpu",
+      "cadence": "per-pr-when-search-data-or-version-changes",
+      "uses_gpu": false,
+      "commands": [
+        "build/c4zero/c4zero selfplay --games 2 --simulations 8 --seed 2026 --device cpu --out runs/e2e/deterministic/a",
+        "build/c4zero/c4zero selfplay --games 2 --simulations 8 --seed 2026 --device cpu --out runs/e2e/deterministic/b",
+        "uv run c4zero-validate-dataset runs/e2e/deterministic/a/manifest.json",
+        "uv run c4zero-validate-dataset runs/e2e/deterministic/b/manifest.json",
+        "shasum -a 256 runs/e2e/deterministic/a/shards/shard-000000.c4az",
+        "shasum -a 256 runs/e2e/deterministic/b/shards/shard-000000.c4az"
+      ],
+      "acceptance": [
+        "both manifests validate",
+        "normalized shard hashes match",
+        "manifest semantic fields match"
+      ]
+    },
+    {
+      "id": "adversarial_contracts",
+      "cadence": "per-pr-when-readers-loaders-or-export-paths-change",
+      "uses_gpu": false,
+      "negative_cases": [
+        "manifest missing version",
+        "manifest with unsupported schema major",
+        "manifest pointing at invalid shard bytes",
+        "checkpoint export from missing checkpoint directory",
+        "arena with missing TorchScript model paths"
+      ],
+      "acceptance": [
+        "negative commands exit non-zero",
+        "failures identify the invalid or missing contract",
+        "no command writes outside runs/e2e/adversarial"
+      ]
+    },
+    {
+      "id": "gpu_nightly",
+      "cadence": "nightly-or-before-long-training",
+      "uses_gpu": true,
+      "manual_only": true,
+      "preflight_commands": [
+        "pwd",
+        "git status --short",
+        "nvidia-smi",
+        "df -h .",
+        "uv sync",
+        "cmake -S src/cpp -B build/c4zero -DCMAKE_PREFIX_PATH=\"$PWD/.venv/lib/python3.11/site-packages/torch/share/cmake\"",
+        "cmake --build build/c4zero"
+      ],
+      "commands": [
+        "uv run c4zero-export --preset small --out checkpoints/e2e/gpu-nightly/bootstrap.ts --device cuda",
+        "build/c4zero/c4zero selfplay --model checkpoints/e2e/gpu-nightly/bootstrap.ts --games 32 --simulations 128 --seed 4242 --device cuda --out runs/e2e/gpu-nightly/selfplay",
+        "uv run c4zero-validate-dataset runs/e2e/gpu-nightly/selfplay/manifest.json",
+        "uv run c4zero-train --preset small --manifest runs/e2e/gpu-nightly/selfplay/manifest.json --steps 100 --seed 4242 --device cuda --out checkpoints/e2e/gpu-nightly/trained",
+        "uv run c4zero-export --checkpoint checkpoints/e2e/gpu-nightly/trained --out checkpoints/e2e/gpu-nightly/trained/inference-reexport.ts --device cuda",
+        "build/c4zero/c4zero arena --model-a checkpoints/e2e/gpu-nightly/bootstrap.ts --model-b checkpoints/e2e/gpu-nightly/trained/inference.ts --games 64 --simulations 128 --seed 4242 --device cuda"
+      ],
+      "notes": [
+        "Do not assume remote machine state, GPU availability, storage capacity, dataset ids, or run ids.",
+        "Jeet or the operator runs final GPU commands and records real outcomes after completion."
+      ]
+    }
+  ]
+}

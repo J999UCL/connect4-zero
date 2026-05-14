@@ -1,0 +1,30 @@
+flowchart LR
+  classDef core fill:#edf7ff,stroke:#3778bf,color:#0f2742;
+  classDef search fill:#fff6dc,stroke:#c48a00,color:#4a3100;
+  classDef ml fill:#effbec,stroke:#4b9444,color:#173d14;
+  classDef data fill:#f7edff,stroke:#8a5cc2,color:#2c1747;
+  game["c4az.game"]:::core
+  network["c4az.network"]:::ml
+  mcts["c4az.mcts"]:::search
+  selfplay["c4az.selfplay"]:::search
+  data["c4az.data"]:::data
+  train["c4az.train"]:::ml
+  arena["c4az.arena"]:::search
+  cli["c4az.cli"]:::data
+  visualize["c4az.visualize"]:::data
+  arena --> game
+  arena --> mcts
+  cli --> arena
+  cli --> data
+  cli --> mcts
+  cli --> network
+  cli --> selfplay
+  cli --> train
+  data --> game
+  mcts --> game
+  network --> game
+  selfplay --> data
+  selfplay --> game
+  selfplay --> mcts
+  train --> network
+  visualize --> network

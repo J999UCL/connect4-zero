@@ -9,6 +9,7 @@ Implement Alphazero style RL for a 3d Connect 4 game (4 by 4 by 4)
 - Jeet runs final experiment commands unless he explicitly delegates that work.
 - Never invent metrics, results, dataset IDs, run metadata, or remote machine state.
 - Never do a git Push without permission.
+- Continuously do local git commits.
 
 ## How To Work Here
 - For open-ended implementation work, Jeet decides the approach. For direct factual questions, answer first and teach second.

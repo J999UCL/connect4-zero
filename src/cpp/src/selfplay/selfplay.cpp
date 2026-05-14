@@ -1,0 +1,66 @@
+#include "c4zero/selfplay/selfplay.hpp"
+
+#include <cmath>
+#include <random>
+#include <stdexcept>
+
+namespace c4zero::selfplay {
+namespace {
+
+struct PendingSample {
+  core::Position position;
+  std::array<float, core::kNumActions> policy{};
+  std::array<std::uint32_t, core::kNumActions> visits{};
+  core::Action action = -1;
+};
+
+}  // namespace
+
+GeneratedGame generate_game(
+    search::Evaluator& evaluator,
+    const SelfPlayConfig& config,
+    std::uint64_t game_id) {
+  search::PuctConfig mcts_config = config.mcts;
+  mcts_config.seed = config.seed ^ (0x9E3779B97F4A7C15ULL + (game_id << 6) + (game_id >> 2));
+  search::PuctMcts mcts(mcts_config);
+  core::Position position = core::Position::empty();
+  search::SearchTree tree(position);
+  std::vector<PendingSample> pending;
+
+  while (!position.is_terminal()) {
+    const double temperature = position.ply < config.temperature_sampling_plies ? 1.0 : 0.0;
+    search::SearchResult result = mcts.search(tree, evaluator, config.add_root_noise, temperature);
+    if (result.selected_action < 0 || !position.is_legal(result.selected_action)) {
+      throw std::runtime_error("self-play selected illegal action");
+    }
+    pending.push_back(PendingSample{position, result.policy, result.visit_counts, result.selected_action});
+    position = position.play(result.selected_action);
+    if (!tree.advance(result.selected_action)) {
+      tree = search::SearchTree(position);
+    }
+  }
+
+  const auto terminal = position.terminal_value();
+  if (!terminal.has_value()) {
+    throw std::runtime_error("self-play ended without terminal value");
+  }
+
+  GeneratedGame game;
+  game.terminal_value = *terminal;
+  game.plies = position.ply;
+  game.samples.reserve(pending.size());
+  for (const PendingSample& sample : pending) {
+    const int flips = static_cast<int>(position.ply) - static_cast<int>(sample.position.ply);
+    const float value = *terminal * ((flips % 2 == 0) ? 1.0f : -1.0f);
+    game.samples.push_back(data::SelfPlaySample::from_position(
+        sample.position,
+        sample.policy,
+        sample.visits,
+        value,
+        sample.action,
+        game_id));
+  }
+  return game;
+}
+
+}  // namespace c4zero::selfplay

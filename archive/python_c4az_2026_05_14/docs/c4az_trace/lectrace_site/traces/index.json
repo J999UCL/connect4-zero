@@ -1,0 +1,12 @@
+{
+  "version": "2",
+  "traces": [
+    {
+      "id": "01_puct_walkthrough",
+      "title": "PUCT Walkthrough",
+      "path": "traces/01_puct_walkthrough.json",
+      "step_count": 236,
+      "built_at": "2026-05-14T12:13:34.947401+00:00"
+    }
+  ]
+}

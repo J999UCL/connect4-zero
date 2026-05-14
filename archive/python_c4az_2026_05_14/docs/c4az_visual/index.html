@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>c4az Visual Architecture</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #5c6b78;
+      --line: #d9e0e7;
+      --panel: #ffffff;
+      --bg: #f5f7fa;
+      --accent: #285e9e;
+    }
+    body {
+      margin: 0;
+      font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    header {
+      padding: 28px 32px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+    h1, h2 {
+      margin: 0;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    h1 {
+      font-size: 28px;
+    }
+    h2 {
+      font-size: 19px;
+    }
+    p {
+      max-width: 940px;
+      color: var(--muted);
+    }
+    main {
+      padding: 24px 32px 40px;
+      display: grid;
+      gap: 18px;
+    }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+    nav a, .diagram-heading a {
+      color: var(--accent);
+      text-decoration: none;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 6px 9px;
+      border-radius: 6px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .panel, .diagram-block {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .diagram-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 8px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+      padding: 6px 8px;
+    }
+    .mermaid {
+      overflow: auto;
+      margin: 0;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>c4az Visual Architecture</h1>
+    <p>
+      Generated from the clean-room AlphaZero package only. Legacy archived code
+      and Rust experiments are intentionally excluded.
+    </p>
+    <nav>
+      <a href="#system_flow">System</a>
+      <a href="#module_dependencies">Modules</a>
+      <a href="#class_uml">UML</a>
+      <a href="#puct_sequence">PUCT</a>
+      <a href="#resnet_architecture">ResNet</a>
+      <a href="#data_lifecycle">Data</a>
+    </nav>
+  </header>
+  <main>
+    <section class="summary">
+      <div class="panel">
+        <h2>Scope</h2>
+        <p>Only files under <code>src/c4az</code> are inspected.</p>
+      </div>
+      <div class="panel">
+        <h2>Generated</h2>
+        <p>2026-05-14T11:49:24.226861+00:00</p>
+      </div>
+      <div class="panel">
+        <h2>Model Sizes</h2>
+        <table><tbody><tr><td>tiny</td><td>46,791</td></tr>
+<tr><td>small</td><td>229,879</td></tr>
+<tr><td>medium</td><td>1,338,711</td></tr></tbody></table>
+      </div>
+    </section>
+    
+      <section class="diagram-block" id="system_flow">
+        <div class="diagram-heading">
+          <h2>System Flow</h2>
+          <a href="system_flow.mmd">Mermaid source</a>
+        </div>
+        <pre class="mermaid">flowchart TD
+  Position[&quot;Position
+bitboards, heights, canonical side-to-move&quot;]
+  Model[&quot;AlphaZeroNet
+policy logits + value&quot;]
+  Evaluator[&quot;TorchEvaluator
+batched neural inference boundary&quot;]
+  MCTS[&quot;PUCTMCTS
+selection, expansion, backup&quot;]
+  Policy[&quot;SearchResult
+visit-count policy target&quot;]
+  SelfPlay[&quot;Self-play game
+sample actions from pi&quot;]
+  Dataset[&quot;SelfPlayDataset
+clean npz shards + manifest&quot;]
+  Train[&quot;train_step
+CE(pi,p) + MSE(z,v)&quot;]
+  Arena[&quot;Arena
+checkpoint-vs-checkpoint eval&quot;]
+
+  Position --&gt; MCTS
+  MCTS --&gt; Evaluator
+  Evaluator --&gt; Model
+  Model --&gt; Evaluator
+  Evaluator --&gt; MCTS
+  MCTS --&gt; Policy
+  Policy --&gt; SelfPlay
+  SelfPlay --&gt; Dataset
+  Dataset --&gt; Train
+  Train --&gt; Model
+  Model --&gt; Arena
+</pre>
+      </section>
+
+      <section class="diagram-block" id="module_dependencies">
+        <div class="diagram-heading">
+          <h2>Module Dependencies</h2>
+          <a href="module_dependencies.mmd">Mermaid source</a>
+        </div>
+        <pre class="mermaid">flowchart LR
+  classDef core fill:#edf7ff,stroke:#3778bf,color:#0f2742;
+  classDef search fill:#fff6dc,stroke:#c48a00,color:#4a3100;
+  classDef ml fill:#effbec,stroke:#4b9444,color:#173d14;
+  classDef data fill:#f7edff,stroke:#8a5cc2,color:#2c1747;
+  game[&quot;c4az.game&quot;]:::core
+  network[&quot;c4az.network&quot;]:::ml
+  mcts[&quot;c4az.mcts&quot;]:::search
+  selfplay[&quot;c4az.selfplay&quot;]:::search
+  data[&quot;c4az.data&quot;]:::data
+  train[&quot;c4az.train&quot;]:::ml
+  arena[&quot;c4az.arena&quot;]:::search
+  cli[&quot;c4az.cli&quot;]:::data
+  visualize[&quot;c4az.visualize&quot;]:::data
+  arena --&gt; game
+  arena --&gt; mcts
+  cli --&gt; arena
+  cli --&gt; data
+  cli --&gt; mcts
+  cli --&gt; network
+  cli --&gt; selfplay
+  cli --&gt; train
+  data --&gt; game
+  mcts --&gt; game
+  network --&gt; game
+  selfplay --&gt; data
+  selfplay --&gt; game
+  selfplay --&gt; mcts
+  train --&gt; network
+  visualize --&gt; network</pre>
+      </section>
+
+      <section class="diagram-block" id="class_uml">
+        <div class="diagram-heading">
+          <h2>Class UML</h2>
+          <a href="class_uml.mmd">Mermaid source</a>
+        </div>
+        <pre class="mermaid">classDiagram
+  direction LR
+  class IllegalMoveError {
+    &lt;&lt;c4az.game&gt;&gt;
+  }
+  class Position {
+    &lt;&lt;c4az.game&gt;&gt;
+    +current : int
+    +opponent : int
+    +heights : tuple(int, ...)
+    +ply : int
+    +terminal_value : float  or  None
+    +is_terminal()  : bool
+    +legal_mask()  : int
+    +legal_actions()  : list(int)
+    +play(action)  : Position
+    +transform(symmetry)  : Position
+  }
+  class AlphaZeroNet {
+    &lt;&lt;c4az.network&gt;&gt;
+    +__init__(config)  : None
+    +forward(x)  : tuple(torch.Tensor, torch.Tensor)
+    +evaluate_positions(positions, device)  : tuple(torch.Tensor, torch.Tensor)
+  }
+  class NetworkConfig {
+    &lt;&lt;c4az.network&gt;&gt;
+    +preset : str
+    +input_channels : int
+    +channels : int
+    +num_res_blocks : int
+    +policy_head_channels : int
+    +value_head_channels : int
+    +value_hidden_dim : int
+    +for_preset(cls, preset)  : &#x27;NetworkConfig&#x27;
+  }
+  class ResidualBlock3D {
+    &lt;&lt;c4az.network&gt;&gt;
+    +__init__(channels)  : None
+    +forward(x)  : torch.Tensor
+  }
+  class Evaluator {
+    &lt;&lt;c4az.mcts&gt;&gt;
+    +evaluate(positions)  : list(NetworkOutput)
+  }
+  class MCTSConfig {
+    &lt;&lt;c4az.mcts&gt;&gt;
+    +simulations_per_move : int
+    +c_puct : float
+    +root_dirichlet_alpha : float
+    +root_exploration_fraction : float
+    +temperature : float
+    +seed : int  or  None
+    +trace : bool
+  }
+  class NetworkOutput {
+    &lt;&lt;c4az.mcts&gt;&gt;
+    +policy_logits : np.ndarray
+    +value : float
+  }
+  class Node {
+    &lt;&lt;c4az.mcts&gt;&gt;
+    +position : Position
+    +parent : &#x27;Node  or  None&#x27;
+    +parent_action : int  or  None
+    +prior : float
+    +children : list(&#x27;Node  or  None&#x27;)
+    +priors : np.ndarray
+    +legal_mask : int
+    +visits : int
+    +mean_value()  : float
+    +child_visits()  : np.ndarray
+  }
+  class PUCTMCTS {
+    &lt;&lt;c4az.mcts&gt;&gt;
+    +__init__(evaluator, config)  : None
+    +search(position)  : SearchResult
+    +advance_tree(root, action)  : Node  or  None
+    +_select(root, simulation)  : list(Node)
+    +_select_action(node)  : int
+    +_score(node, action)  : float
+    +_expand(node)  : float
+    +_backup(path, leaf_value)  : None
+  }
+  class SearchResult {
+    &lt;&lt;c4az.mcts&gt;&gt;
+    +root : Node
+    +policy : np.ndarray
+    +visit_counts : np.ndarray
+    +q_values : np.ndarray
+    +root_value : float
+    +trace : list(dict)
+  }
+  class TorchEvaluator {
+    &lt;&lt;c4az.mcts&gt;&gt;
+    +__init__(model)  : None
+    +evaluate(positions)  : list(NetworkOutput)
+  }
+  class UniformEvaluator {
+    &lt;&lt;c4az.mcts&gt;&gt;
+    +__init__(value)  : None
+    +evaluate(positions)  : list(NetworkOutput)
+  }
+  class SelfPlayConfig {
+    &lt;&lt;c4az.selfplay&gt;&gt;
+    +games : int
+    +simulations_per_move : int
+    +c_puct : float
+    +root_dirichlet_alpha : float
+    +root_exploration_fraction : float
+    +temperature_cutoff_ply : int
+    +seed : int  or  None
+  }
+  class SelfPlayGame {
+    &lt;&lt;c4az.selfplay&gt;&gt;
+    +samples : list(SelfPlaySample)
+    +terminal_value : float
+    +plies : int
+  }
+  class SelfPlayDataset {
+    &lt;&lt;c4az.data&gt;&gt;
+    +__init__(manifest_path)  : None
+    +__len__()  : int
+    +__getitem__(index)  : dict(str, torch.Tensor)
+    +_locate(index)  : tuple(&#x27;_LoadedShard&#x27;, int)
+  }
+  class SelfPlaySample {
+    &lt;&lt;c4az.data&gt;&gt;
+    +current_bits : int
+    +opponent_bits : int
+    +policy : np.ndarray
+    +value : float
+    +visit_counts : np.ndarray
+    +legal_mask : int
+    +action : int
+    +ply : int
+    +from_position(cls, position)  : &#x27;SelfPlaySample&#x27;
+  }
+  class _LoadedShard {
+    &lt;&lt;c4az.data&gt;&gt;
+    +current_bits : np.ndarray
+    +opponent_bits : np.ndarray
+    +policies : np.ndarray
+    +values : np.ndarray
+    +visit_counts : np.ndarray
+    +legal_masks : np.ndarray
+    +actions : np.ndarray
+    +plies : np.ndarray
+    +from_path(cls, path)  : &#x27;_LoadedShard&#x27;
+    +__len__()  : int
+    +sample(index)  : SelfPlaySample
+  }
+  class AlphaZeroLoss {
+    &lt;&lt;c4az.train&gt;&gt;
+    +forward(policy_logits, values, target_policy, target_value)  : tuple(torch.Tensor, dict(str, float))
+  }
+  class TrainerConfig {
+    &lt;&lt;c4az.train&gt;&gt;
+    +batch_size : int
+    +lr : float
+    +weight_decay : float
+    +grad_clip_norm : float
+  }
+  class ArenaConfig {
+    &lt;&lt;c4az.arena&gt;&gt;
+    +games : int
+    +simulations_per_move : int
+    +c_puct : float
+    +seed : int  or  None
+  }
+  class ArenaResult {
+    &lt;&lt;c4az.arena&gt;&gt;
+    +wins : int
+    +losses : int
+    +draws : int
+    +games : int
+    +score_rate()  : float
+  }
+  class ClassInfo {
+    &lt;&lt;c4az.visualize&gt;&gt;
+    +module : str
+    +name : str
+    +bases : tuple(str, ...)
+    +fields : tuple(str, ...)
+    +methods : tuple(str, ...)
+    +annotations : tuple(str, ...)
+  }
+  Node --&gt; Position
+  SearchResult --&gt; Node
+  SelfPlayGame --&gt; SelfPlaySample</pre>
+      </section>
+
+      <section class="diagram-block" id="puct_sequence">
+        <div class="diagram-heading">
+          <h2>PUCT Sequence</h2>
+          <a href="puct_sequence.mmd">Mermaid source</a>
+        </div>
+        <pre class="mermaid">sequenceDiagram
+  participant Root as Root Node
+  participant Tree as PUCTMCTS
+  participant Leaf as Leaf Node
+  participant Net as TorchEvaluator / AlphaZeroNet
+  participant Backup as Backup
+
+  Tree-&gt;&gt;Root: ensure root expanded
+  loop simulations_per_move
+    Tree-&gt;&gt;Tree: select argmax Q + c_puct * P * sqrt(N) / (1 + N_a)
+    Tree-&gt;&gt;Leaf: create child if edge is unexpanded
+    alt terminal leaf
+      Leaf--&gt;&gt;Tree: exact terminal_value
+    else non-terminal leaf
+      Tree-&gt;&gt;Net: evaluate Position
+      Net--&gt;&gt;Tree: priors P(s,·), value V(s)
+      Tree-&gt;&gt;Leaf: initialize legal priors
+    end
+    Tree-&gt;&gt;Backup: backup value, flipping sign each edge
+  end
+  Tree--&gt;&gt;Root: pi from root visit counts
+</pre>
+      </section>
+
+      <section class="diagram-block" id="resnet_architecture">
+        <div class="diagram-heading">
+          <h2>3D ResNet Architecture</h2>
+          <a href="resnet_architecture.mmd">Mermaid source</a>
+        </div>
+        <pre class="mermaid">flowchart LR
+  Input[&quot;Input\n[B, 2, 4, 4, 4]\ncurrent/opponent bitboard planes&quot;]
+  Stem[&quot;Stem\nConv3d 3x3x3 + BN + ReLU&quot;]
+  Tower[&quot;Residual Tower\n3/4/6 residual blocks\n16/32/64 channels&quot;]
+  PolicyConv[&quot;Policy Head\n1x1x1 Conv3d -&gt; BN -&gt; ReLU&quot;]
+  PolicyOut[&quot;Policy logits\n[B, 16]&quot;]
+  ValueConv[&quot;Value Head\n1x1x1 Conv3d -&gt; BN -&gt; ReLU&quot;]
+  ValueOut[&quot;Value\n[B] in [-1, 1]&quot;]
+  Params[&quot;Preset sizes\ntiny: 46,791 params\nsmall: 229,879 params\nmedium: 1,338,711 params&quot;]
+
+  Input --&gt; Stem --&gt; Tower
+  Tower --&gt; PolicyConv --&gt; PolicyOut
+  Tower --&gt; ValueConv --&gt; ValueOut
+  Tower -.-&gt; Params
+</pre>
+      </section>
+
+      <section class="diagram-block" id="data_lifecycle">
+        <div class="diagram-heading">
+          <h2>Data Lifecycle</h2>
+          <a href="data_lifecycle.mmd">Mermaid source</a>
+        </div>
+        <pre class="mermaid">flowchart LR
+  Game[&quot;Self-play game&quot;]
+  Search[&quot;PUCT search per ply&quot;]
+  Sample[&quot;SelfPlaySample
+current_bits, opponent_bits, pi, z, visits&quot;]
+  Shard[&quot;NPZ shard
+columnar arrays&quot;]
+  Manifest[&quot;manifest.json
+schema + shard records&quot;]
+  Loader[&quot;SelfPlayDataset&quot;]
+  Augment[&quot;8 symmetries
+applied at load time&quot;]
+  Batch[&quot;Training batch
+input, policy, value&quot;]
+
+  Game --&gt; Search --&gt; Sample --&gt; Shard
+  Sample --&gt; Manifest
+  Shard --&gt; Loader
+  Manifest --&gt; Loader
+  Loader --&gt; Augment --&gt; Batch
+</pre>
+      </section>
+
+  </main>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'loose' });
+  </script>
+</body>
+</html>

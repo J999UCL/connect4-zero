@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "connect4-zero"
+name = "c4zero-python"
 version = "0.1.0"
-description = "AlphaZero-style reinforcement learning for gravity-based 4x4x4 Connect Four."
+description = "PyTorch training/export and inspection tools for the C++ AlphaZero 4x4x4 Connect Four implementation."
 requires-python = ">=3.11,<3.12"
 dependencies = [
   "numpy>=1.26",
@@ -13,22 +13,23 @@ dependencies = [
 ]
 
 [project.scripts]
-c4az-selfplay = "c4az.cli:selfplay_main"
-c4az-train = "c4az.cli:train_main"
-c4az-loop = "c4az.cli:loop_main"
-c4az-arena = "c4az.cli:arena_main"
-c4az-inspect-checkpoint = "c4az.cli:inspect_checkpoint_main"
-c4az-generate-diagrams = "c4az.visualize:main"
+c4zero-tools-version = "c4zero_tools.version:main"
+c4zero-validate-dataset = "c4zero_tools.datasets:main"
+c4zero-train = "c4zero_train.cli:train_main"
+c4zero-export = "c4zero_train.cli:export_main"
+c4zero-inspect-model = "c4zero_train.cli:inspect_model_main"
 
 [project.optional-dependencies]
 dev = [
   "pytest>=7.0",
 ]
-
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src/python"]
+
+[tool.setuptools.package-data]
+c4zero_tools = ["version_manifest.json"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src", "."]
-testpaths = ["tests"]
+pythonpath = ["src/python", "."]
+testpaths = ["src/python/tests"]
 addopts = "-ra"

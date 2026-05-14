@@ -1,0 +1,32 @@
+flowchart TD
+  Position["Position
+bitboards, heights, canonical side-to-move"]
+  Model["AlphaZeroNet
+policy logits + value"]
+  Evaluator["TorchEvaluator
+batched neural inference boundary"]
+  MCTS["PUCTMCTS
+selection, expansion, backup"]
+  Policy["SearchResult
+visit-count policy target"]
+  SelfPlay["Self-play game
+sample actions from pi"]
+  Dataset["SelfPlayDataset
+clean npz shards + manifest"]
+  Train["train_step
+CE(pi,p) + MSE(z,v)"]
+  Arena["Arena
+checkpoint-vs-checkpoint eval"]
+
+  Position --> MCTS
+  MCTS --> Evaluator
+  Evaluator --> Model
+  Model --> Evaluator
+  Evaluator --> MCTS
+  MCTS --> Policy
+  Policy --> SelfPlay
+  SelfPlay --> Dataset
+  Dataset --> Train
+  Train --> Model
+  Model --> Arena
+

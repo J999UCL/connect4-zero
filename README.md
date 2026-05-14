@@ -1,88 +1,76 @@
-# Connect4 AlphaZero
+# C4Zero
 
-Clean-room AlphaZero for gravity-based 4x4x4 Connect Four.
+Clean AlphaZero for gravity-based 4x4x4 Connect Four.
 
-The active implementation lives in `src/c4az`. Legacy Python code, old reports,
-and old tests are archived under `archive/legacy_python` for reference only.
-The active path does not import the legacy `connect4_zero` package.
+The active runtime is split intentionally:
 
-## Setup
+- C++ owns game rules, PUCT MCTS, heuristic bots, arena, self-play, and
+  TorchScript inference during search.
+- Python/PyTorch owns model definition, training, checkpointing, replay loading,
+  and TorchScript export.
+- Python inspection tools live under `src/python/c4zero_tools`; training lives
+  under `src/python/c4zero_train`.
+
+Previous implementations are archived for reference only:
+
+- `archive/legacy_python`
+- `archive/python_c4az_2026_05_14`
+- `archive/rust_prototype_2026_05_14`
+
+Active code must not import or link against archived code.
+
+## C++ Build
+
+The C++ build uses CMake, C++17, and libtorch:
 
 ```bash
-uv venv --python 3.11 .venv
-uv pip install -e ".[dev]"
-uv run pytest
+uv sync
+cmake -S src/cpp -B build/c4zero \
+  -DCMAKE_PREFIX_PATH="$PWD/.venv/lib/python3.11/site-packages/torch/share/cmake"
+cmake --build build/c4zero
+ctest --test-dir build/c4zero --output-on-failure
 ```
 
-## Active Commands
+This machine currently has PyTorch CMake files in the venv, but local `cmake`
+may need to be installed before the full build can run.
+
+## CLI Shape
+
+After building:
 
 ```bash
-c4az-selfplay
-c4az-train
-c4az-loop
-c4az-arena
-c4az-inspect-checkpoint
-c4az-generate-diagrams
+build/c4zero/c4zero version --json
+build/c4zero/c4zero bots
+build/c4zero/c4zero arena --bot-a center --bot-b tactical --games 20
+build/c4zero/c4zero selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --out runs/c4zero-smoke
 ```
 
-Use `--help` on any command for arguments.
+## Python Training And Tools
 
-## Algorithm
+```bash
+PYTHONPATH=src/python python -m c4zero_tools.version --json
+PYTHONPATH=src/python python -m c4zero_tools.datasets runs/c4zero-smoke/manifest.json
+PYTHONPATH=src/python python -m c4zero_train.cli --preset tiny --manifest runs/c4zero-smoke/manifest.json --steps 1 --out checkpoints/smoke
+```
 
-The active stack is paper-faithful AlphaZero:
+## Algorithm Contract
+
+The active stack follows AlphaZero mechanics:
 
 - bitboard 4x4x4 Connect Four game core
 - canonical side-to-move perspective
-- neural policy/value model
-- PUCT MCTS with no random rollouts
+- PyTorch 3D ResNet policy/value network
+- TorchScript export loaded by C++ for MCTS inference
+- PUCT MCTS with neural leaf evaluation
+- no random rollouts in the active AlphaZero path
 - exact terminal values
-- self-play policy targets from root visit counts
+- self-play targets from root visit counts
 - final outcome value targets
-- loss: policy cross entropy + value MSE + optimizer weight decay
+- replay-window sampling by recent games
+- SGD with momentum and L2 weight decay
 - root Dirichlet noise during self-play only
 - deterministic arena/eval by default
 
-See `docs/alpha_zero_spec.md` for the implementation contract and verification
-strategy.
-
-## Visual Architecture
-
-Generate the local visual walkthrough:
-
-```bash
-uv run c4az-generate-diagrams
-```
-
-Then open:
-
-```text
-docs/c4az_visual/index.html
-```
-
-The generator inspects only `src/c4az` and emits Mermaid diagrams for the
-system flow, module dependencies, class UML, PUCT search, ResNet architecture,
-and data lifecycle.
-
-## Model Presets
-
-| Preset | Blocks | Channels | Params | Use |
-|---|---:|---:|---:|---|
-| `tiny` | 3 | 16 | 46,791 | tests and smoke runs |
-| `small` | 4 | 32 | 229,879 | default serious model |
-| `medium` | 6 | 64 | 1,338,711 | ablation |
-
-The default is `small`, a much leaner 3D ResNet than the old 1.34M parameter
-starting point.
-
-## Verification
-
-Run:
-
-```bash
-uv run pytest
-```
-
-The new suite checks game rules, all 76 win masks, symmetries, model shapes and
-parameter counts, PUCT ledger behavior, an independent reference PUCT
-differential, tactical win/block behavior, data round trips, checkpointing, and
-a tiny end-to-end self-play/train/arena smoke.
+Version compatibility is centralized in `version_manifest.json`. Datasets,
+checkpoints, and run manifests must carry the version snapshot so schema,
+encoder, action mapping, and game-rule drift fails loudly.

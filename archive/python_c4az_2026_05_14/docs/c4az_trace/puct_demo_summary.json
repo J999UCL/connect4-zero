@@ -1,0 +1,210 @@
+{
+  "board_layers": [
+    "z=3\n. . . .\n. . . .\n. . . .\n. . . .",
+    "z=2\n. . . .\n. . . .\n. . . .\n. . . .",
+    "z=1\n. . . .\n. . . .\n. X O .\n. . . .",
+    "z=0\n. . O .\n. O X .\n. X O .\n. X . ."
+  ],
+  "evaluator_calls": 13,
+  "legal_actions": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15
+  ],
+  "ply": 8,
+  "positions_evaluated": 13,
+  "root_value": 0.05181375073816508,
+  "root_visits": 12,
+  "top_actions": [
+    {
+      "action": 5,
+      "policy": 0.25,
+      "q": 0.041450999677181244,
+      "visits": 3
+    },
+    {
+      "action": 9,
+      "policy": 0.25,
+      "q": 0.041450999677181244,
+      "visits": 3
+    },
+    {
+      "action": 10,
+      "policy": 0.25,
+      "q": 0.041450999677181244,
+      "visits": 3
+    },
+    {
+      "action": 6,
+      "policy": 0.1666666716337204,
+      "q": 0.062176499515771866,
+      "visits": 2
+    },
+    {
+      "action": 0,
+      "policy": 0.0833333358168602,
+      "q": 0.12435299903154373,
+      "visits": 1
+    }
+  ],
+  "trace_event_counts": {
+    "backup": 31,
+    "evaluate": 12,
+    "select": 19
+  },
+  "trace_preview": [
+    {
+      "action": 0,
+      "event": "select",
+      "score": 0.0,
+      "simulation": 0
+    },
+    {
+      "event": "evaluate",
+      "path": [
+        0
+      ],
+      "simulation": 0,
+      "value": -0.12435300177159621
+    },
+    {
+      "action": 0,
+      "event": "backup",
+      "mean": -0.12435300177159621,
+      "value": -0.12435300177159621,
+      "visits": 1
+    },
+    {
+      "action": null,
+      "event": "backup",
+      "mean": 0.12435300177159621,
+      "value": 0.12435300177159621,
+      "visits": 1
+    },
+    {
+      "action": 9,
+      "event": "select",
+      "score": 0.19842492789030075,
+      "simulation": 1
+    },
+    {
+      "event": "evaluate",
+      "path": [
+        9
+      ],
+      "simulation": 1,
+      "value": -0.12435300177159621
+    },
+    {
+      "action": 9,
+      "event": "backup",
+      "mean": -0.12435300177159621,
+      "value": -0.12435300177159621,
+      "visits": 1
+    },
+    {
+      "action": null,
+      "event": "backup",
+      "mean": 0.12435300177159621,
+      "value": 0.12435300177159621,
+      "visits": 2
+    },
+    {
+      "action": 10,
+      "event": "select",
+      "score": 0.28061522413536677,
+      "simulation": 2
+    },
+    {
+      "event": "evaluate",
+      "path": [
+        10
+      ],
+      "simulation": 2,
+      "value": -0.12435300177159621
+    },
+    {
+      "action": 10,
+      "event": "backup",
+      "mean": -0.12435300177159621,
+      "value": -0.12435300177159621,
+      "visits": 1
+    },
+    {
+      "action": null,
+      "event": "backup",
+      "mean": 0.12435300177159621,
+      "value": 0.12435300177159621,
+      "visits": 3
+    },
+    {
+      "action": 5,
+      "event": "select",
+      "score": 0.31725854320922475,
+      "simulation": 3
+    },
+    {
+      "event": "evaluate",
+      "path": [
+        5
+      ],
+      "simulation": 3,
+      "value": -0.12435300177159621
+    },
+    {
+      "action": 5,
+      "event": "backup",
+      "mean": -0.12435300177159621,
+      "value": -0.12435300177159621,
+      "visits": 1
+    },
+    {
+      "action": null,
+      "event": "backup",
+      "mean": 0.12435300177159621,
+      "value": 0.12435300177159621,
+      "visits": 4
+    },
+    {
+      "action": 6,
+      "event": "select",
+      "score": 0.3663386106491089,
+      "simulation": 4
+    },
+    {
+      "event": "evaluate",
+      "path": [
+        6
+      ],
+      "simulation": 4,
+      "value": -0.12435300177159621
+    },
+    {
+      "action": 6,
+      "event": "backup",
+      "mean": -0.12435300177159621,
+      "value": -0.12435300177159621,
+      "visits": 1
+    },
+    {
+      "action": null,
+      "event": "backup",
+      "mean": 0.12435300177159621,
+      "value": 0.12435300177159621,
+      "visits": 5
+    }
+  ]
+}

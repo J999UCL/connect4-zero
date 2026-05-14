@@ -1,0 +1,7 @@
+#pragma once
+
+namespace c4zero::version {
+
+inline constexpr const char* kVersionManifestJson = R"c4zero(@C4ZERO_VERSION_MANIFEST_JSON@)c4zero";
+
+}  // namespace c4zero::version

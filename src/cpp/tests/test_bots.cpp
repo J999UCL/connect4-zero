@@ -3,6 +3,17 @@
 
 using namespace c4zero;
 
+class IllegalBot final : public bots::Bot {
+ public:
+  core::Action select_move(const core::Position&) const override {
+    return core::kNumActions;
+  }
+
+  std::string name() const override {
+    return "illegal";
+  }
+};
+
 int main() {
   const auto empty = core::Position::empty();
   C4ZERO_CHECK_EQ(bots::FirstLegalBot{}.select_move(empty), 0);
@@ -25,6 +36,31 @@ int main() {
   const auto match = bots::play_bot_match(bots::FirstLegalBot{}, bots::CenterOrderBot{}, 2, true);
   C4ZERO_CHECK_EQ(match.games, 2);
   C4ZERO_CHECK(match.total_plies > 0);
+
+  const auto ladder = bots::play_bot_match(
+      bots::DepthLimitedMinimaxBot(3),
+      bots::OnePlyTacticalBot{},
+      4,
+      true);
+  C4ZERO_CHECK_EQ(ladder.games, 4);
+  C4ZERO_CHECK_EQ(ladder.first_wins + ladder.second_wins + ladder.draws, 4);
+  C4ZERO_CHECK(ladder.first_score_rate() >= 0.5);
+
+  bool illegal_threw = false;
+  try {
+    (void)bots::play_bot_match(IllegalBot{}, bots::CenterOrderBot{}, 1, true);
+  } catch (const std::runtime_error&) {
+    illegal_threw = true;
+  }
+  C4ZERO_CHECK(illegal_threw);
+
+  bool unknown_threw = false;
+  try {
+    (void)bots::make_bot("does-not-exist");
+  } catch (const std::invalid_argument&) {
+    unknown_threw = true;
+  }
+  C4ZERO_CHECK(unknown_threw);
 
   for (const auto& name : bots::bot_names()) {
     auto bot = bots::make_bot(name);

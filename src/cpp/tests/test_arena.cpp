@@ -14,6 +14,43 @@ int main() {
   }
   C4ZERO_CHECK(threw);
 
+  c4zero::arena::ArenaConfig negative_games;
+  negative_games.model_a = "unused-a.ts";
+  negative_games.model_b = "unused-b.ts";
+  negative_games.games = -1;
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(negative_games);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
+  c4zero::arena::ArenaConfig zero_simulations;
+  zero_simulations.model_a = "unused-a.ts";
+  zero_simulations.model_b = "unused-b.ts";
+  zero_simulations.simulations = 0;
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(zero_simulations);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
+  c4zero::arena::ArenaConfig invalid_device;
+  invalid_device.model_a = "unused-a.ts";
+  invalid_device.model_b = "unused-b.ts";
+  invalid_device.games = 0;
+  invalid_device.device = "gpu";
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(invalid_device);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
   const char* fixture = std::getenv("C4ZERO_TORCHSCRIPT_FIXTURE");
   if (fixture == nullptr || std::string(fixture).empty()) {
     std::cout << "C4ZERO_TORCHSCRIPT_FIXTURE unset; skipping optional arena checkpoint fixture test\n";

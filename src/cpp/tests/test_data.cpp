@@ -24,6 +24,27 @@ int main() {
   C4ZERO_CHECK_EQ(loaded[0].opponent_bits, sample.opponent_bits);
   C4ZERO_CHECK_EQ(loaded[0].visit_counts[2], 9);
 
+  bool missing_threw = false;
+  try {
+    (void)data::read_shard((std::filesystem::temp_directory_path() / "c4zero-missing-shard.c4az").string());
+  } catch (const std::runtime_error&) {
+    missing_threw = true;
+  }
+  C4ZERO_CHECK(missing_threw);
+
+  const auto corrupt_path = std::filesystem::temp_directory_path() / "c4zero-corrupt-shard.c4az";
+  {
+    std::ofstream corrupt(corrupt_path, std::ios::binary);
+    corrupt << "not a c4zero shard";
+  }
+  bool corrupt_threw = false;
+  try {
+    (void)data::read_shard(corrupt_path.string());
+  } catch (const std::runtime_error&) {
+    corrupt_threw = true;
+  }
+  C4ZERO_CHECK(corrupt_threw);
+
   data::ReplayBuffer replay(2);
   replay.add_game({sample});
   replay.add_game({sample, sample});

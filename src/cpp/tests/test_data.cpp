@@ -62,6 +62,7 @@ int main() {
   data::write_manifest(manifest_path.string(), "shards/shard-000000.c4az", 1, 1, manifest_config);
   std::ifstream manifest(manifest_path);
   const std::string text((std::istreambuf_iterator<char>(manifest)), std::istreambuf_iterator<char>());
+  C4ZERO_CHECK(text.find("\"created_at\": \"") != std::string::npos);
   C4ZERO_CHECK(text.find("\"simulations_per_move\": 800") != std::string::npos);
   C4ZERO_CHECK(text.find("model\\\"with-quote.ts") != std::string::npos);
   C4ZERO_CHECK(text.find("\"git_commit\": \"abc123\"") != std::string::npos);

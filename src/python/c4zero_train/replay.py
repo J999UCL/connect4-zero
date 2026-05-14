@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
+from datetime import datetime, timezone
 from pathlib import Path
 import random
 
@@ -39,23 +39,22 @@ class ReplayBuffer:
 
     @classmethod
     def from_manifests(cls, manifests: list[str | Path], replay_games: int) -> "ReplayBuffer":
-        by_game: dict[tuple[int, int], list[Sample]] = {}
-        previous_created_at: str | None = None
-        for manifest_index, manifest_path in enumerate(manifests):
+        manifest_records = []
+        for manifest_path in manifests:
             manifest_path = Path(manifest_path)
             manifest = validate_manifest(manifest_path)
-            created_at = manifest.get("created_at")
-            if created_at is not None:
-                if previous_created_at is not None and created_at < previous_created_at:
-                    raise ValueError("manifest created_at values must be passed oldest-to-newest")
-                previous_created_at = created_at
+            manifest_records.append((_manifest_chronology_key(manifest_path, manifest), manifest_path, manifest))
+
+        by_game: dict[tuple[float, int, str], list[Sample]] = {}
+        for chronology_key, manifest_path, manifest in sorted(manifest_records, key=lambda record: record[0]):
             root = manifest_path.parent
             for shard in manifest["shard_paths"]:
                 shard_path = Path(shard)
                 if not shard_path.is_absolute():
                     shard_path = root / shard_path
                 for sample in read_shard(shard_path):
-                    by_game.setdefault((manifest_index, sample.game_id), []).append(sample)
+                    game_key = (chronology_key[0], sample.game_id, chronology_key[1])
+                    by_game.setdefault(game_key, []).append(sample)
         kept_game_ids = sorted(by_game)[-replay_games:]
         samples = [sample for game_id in kept_game_ids for sample in by_game[game_id]]
         return cls(samples, num_games=len(kept_game_ids))
@@ -68,3 +67,25 @@ class ReplayBuffer:
             "num_samples": len(self.samples),
             "num_games": self._num_games,
         }
+
+
+def _manifest_chronology_key(manifest_path: Path, manifest: dict) -> tuple[float, str]:
+    created_at = manifest.get("created_at")
+    if created_at is None:
+        return (manifest_path.stat().st_mtime, str(manifest_path.resolve()))
+    return (_parse_created_at(created_at).timestamp(), str(manifest_path.resolve()))
+
+
+def _parse_created_at(created_at: str) -> datetime:
+    if not isinstance(created_at, str):
+        raise ValueError("manifest created_at must be an ISO-8601 string")
+    normalized = created_at
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ValueError(f"manifest created_at is not valid ISO-8601: {created_at}") from error
+    if parsed.tzinfo is None:
+        raise ValueError("manifest created_at must include a timezone")
+    return parsed.astimezone(timezone.utc)

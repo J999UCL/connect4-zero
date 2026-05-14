@@ -7,11 +7,11 @@ from c4zero_tools.version import current_version_info
 from c4zero_train.replay import ReplayBuffer
 
 
-def write_manifest_with_one_sample(root, value, created_at=None):
+def write_manifest_with_one_sample(root, value, created_at=None, game_id=0):
     (root / "shards").mkdir(parents=True)
     payload = bytearray()
     payload += HEADER.pack(MAGIC, 1, 0, 1)
-    payload += SAMPLE_PREFIX.pack(1, 2, bytes([0] * 16), 0, 0, 0xFFFF, 0)
+    payload += SAMPLE_PREFIX.pack(1, 2, bytes([0] * 16), 0, game_id, 0xFFFF, 0)
     payload += POLICY.pack(*([1.0 / 16.0] * 16))
     payload += VISITS.pack(*([1] * 16))
     payload += VALUE.pack(value)
@@ -47,15 +47,27 @@ def test_replay_keeps_latest_manifest_ordered_games(tmp_path):
     assert replay.samples[0].value == -1.0
 
 
-def test_replay_rejects_decreasing_manifest_timestamps(tmp_path):
+def test_replay_sorts_manifest_timestamps_before_windowing(tmp_path):
     first = write_manifest_with_one_sample(tmp_path / "first", 1.0, "2026-05-14T01:00:00Z")
     second = write_manifest_with_one_sample(tmp_path / "second", -1.0, "2026-05-14T00:00:00Z")
-    try:
-        ReplayBuffer.from_manifests([first, second], replay_games=2)
-    except ValueError as error:
-        assert "oldest-to-newest" in str(error)
-    else:
-        raise AssertionError("expected replay chronology validation to fail")
+    replay = ReplayBuffer.from_manifests([first, second], replay_games=1)
+    assert replay.metadata()["num_games"] == 1
+    assert replay.samples[0].value == 1.0
+
+
+def test_replay_keeps_latest_game_ids_within_same_manifest_time(tmp_path):
+    older = write_manifest_with_one_sample(tmp_path / "older", 1.0, "2026-05-14T00:00:00Z", game_id=9)
+    newer = write_manifest_with_one_sample(tmp_path / "newer", -1.0, "2026-05-14T00:00:00Z", game_id=10)
+    replay = ReplayBuffer.from_manifests([newer, older], replay_games=1)
+    assert replay.metadata()["num_games"] == 1
+    assert replay.samples[0].game_id == 10
+    assert replay.samples[0].value == -1.0
+
+
+def test_replay_rejects_unzoned_manifest_timestamp(tmp_path):
+    manifest = write_manifest_with_one_sample(tmp_path / "manifest", 1.0, "2026-05-14T00:00:00")
+    with pytest.raises(ValueError, match="must include a timezone"):
+        ReplayBuffer.from_manifests([manifest], replay_games=1)
 
 
 def test_replay_rejects_manifest_with_no_samples(tmp_path):

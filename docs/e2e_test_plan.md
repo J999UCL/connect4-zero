@@ -99,7 +99,7 @@ from pathlib import Path
 
 manifest_path = Path("runs/e2e/cpu-smoke/selfplay/manifest.json")
 manifest = json.loads(manifest_path.read_text())
-for key in ["schema_version", "num_games", "num_samples", "model_checkpoint", "shard_paths", "config", "version"]:
+for key in ["schema_version", "created_at", "num_games", "num_samples", "model_checkpoint", "shard_paths", "config", "version"]:
     assert key in manifest, key
 for key in ["dataset_schema_version", "game_rules_version", "encoder_version", "action_mapping_version", "symmetry_version"]:
     assert key in manifest["version"], key

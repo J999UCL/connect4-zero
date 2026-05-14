@@ -1,7 +1,9 @@
 #include "c4zero/data/shard.hpp"
 #include "c4zero/version/info.hpp"
 
+#include <chrono>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -62,6 +64,20 @@ std::string json_escape(const std::string& value) {
 
 const char* json_bool(bool value) {
   return value ? "true" : "false";
+}
+
+std::string utc_now_iso8601() {
+  const auto now = std::chrono::system_clock::now();
+  const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+  std::tm utc{};
+#if defined(_WIN32)
+  gmtime_s(&utc, &now_time);
+#else
+  gmtime_r(&now_time, &utc);
+#endif
+  std::ostringstream out;
+  out << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+  return out.str();
 }
 
 }  // namespace
@@ -157,8 +173,10 @@ void write_manifest(
   if (!out) {
     throw std::runtime_error("failed to open manifest for writing: " + path);
   }
+  const std::string created_at = utc_now_iso8601();
   out << "{\n";
   out << "  \"schema_version\": \"" << c4zero::version::version_field("dataset_schema_version") << "\",\n";
+  out << "  \"created_at\": " << json_escape(created_at) << ",\n";
   out << "  \"num_games\": " << num_games << ",\n";
   out << "  \"num_samples\": " << num_samples << ",\n";
   out << "  \"model_checkpoint\": " << json_escape(config.model_checkpoint) << ",\n";

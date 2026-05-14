@@ -53,6 +53,7 @@
       "contract_checks": {
         "manifest_required_keys": [
           "schema_version",
+          "created_at",
           "num_games",
           "num_samples",
           "model_checkpoint",

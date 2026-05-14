@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -38,8 +39,16 @@ struct ShardHeader {
 };
 
 struct SelfPlayManifestConfig {
+  std::string dataset_kind = "alphazero_selfplay";
   std::string model_checkpoint;
   std::string device = "cpu";
+  int curriculum_stage = -1;
+  std::string policy_source = "mcts_visit_counts";
+  std::string value_source = "game_outcome";
+  float value_loss_weight = 1.0f;
+  int shard_size = 0;
+  bool symmetry_augmentation = false;
+  std::map<std::string, std::uint64_t> category_counts;
   int simulations_per_move = 800;
   double c_base = 19652.0;
   double c_init = 1.25;
@@ -61,6 +70,12 @@ void write_shard(const std::string& path, const std::vector<SelfPlaySample>& sam
 void write_manifest(
     const std::string& path,
     const std::string& shard_path,
+    std::uint64_t num_games,
+    std::uint64_t num_samples,
+    const SelfPlayManifestConfig& config);
+void write_manifest(
+    const std::string& path,
+    const std::vector<std::string>& shard_paths,
     std::uint64_t num_games,
     std::uint64_t num_samples,
     const SelfPlayManifestConfig& config);

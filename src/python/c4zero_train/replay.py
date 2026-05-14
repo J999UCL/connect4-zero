@@ -38,7 +38,7 @@ class ReplayBuffer:
             raise ValueError("ReplayBuffer requires at least one sample")
 
     @classmethod
-    def from_manifests(cls, manifests: list[str | Path], replay_games: int) -> "ReplayBuffer":
+    def from_manifests(cls, manifests: list[str | Path], replay_games: int | str) -> "ReplayBuffer":
         manifest_records = []
         for manifest_path in manifests:
             manifest_path = Path(manifest_path)
@@ -55,7 +55,12 @@ class ReplayBuffer:
                 for sample in read_shard(shard_path):
                     game_key = (chronology_key[0], sample.game_id, chronology_key[1])
                     by_game.setdefault(game_key, []).append(sample)
-        kept_game_ids = sorted(by_game)[-replay_games:]
+        if replay_games == "all":
+            kept_game_ids = sorted(by_game)
+        else:
+            if not isinstance(replay_games, int) or replay_games <= 0:
+                raise ValueError("replay_games must be a positive integer or 'all'")
+            kept_game_ids = sorted(by_game)[-replay_games:]
         samples = [sample for game_id in kept_game_ids for sample in by_game[game_id]]
         return cls(samples, num_games=len(kept_game_ids))
 

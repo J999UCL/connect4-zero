@@ -19,6 +19,8 @@ class TrainConfig:
     momentum: float = 0.9
     weight_decay: float = 1e-4
     seed: int = 1
+    policy_weight: float = 1.0
+    value_weight: float = 1.0
 
 
 def make_optimizer(model: AlphaZeroNet, config: TrainConfig) -> torch.optim.SGD:
@@ -56,13 +58,22 @@ def train_step(
     optimizer: torch.optim.Optimizer,
     samples,
     device: torch.device | str = "cpu",
+    policy_weight: float = 1.0,
+    value_weight: float = 1.0,
 ) -> LossBreakdown:
     model.train()
     inputs = encode_samples(samples, device=device)
     target_policy, target_value = batch_targets(samples, device=device)
     optimizer.zero_grad(set_to_none=True)
     policy_logits, values = model(inputs)
-    loss, breakdown = alpha_zero_loss(policy_logits, values, target_policy, target_value)
+    loss, breakdown = alpha_zero_loss(
+        policy_logits,
+        values,
+        target_policy,
+        target_value,
+        policy_weight=policy_weight,
+        value_weight=value_weight,
+    )
     l2_value = l2_regularization_value(model, optimizer)
     loss.backward()
     optimizer.step()
@@ -89,7 +100,16 @@ def train_steps(
     losses: list[LossBreakdown] = []
     for _ in range(steps):
         samples = replay.sample_batch(config.batch_size, rng)
-        losses.append(train_step(model, optimizer, samples, device=device))
+        losses.append(
+            train_step(
+                model,
+                optimizer,
+                samples,
+                device=device,
+                policy_weight=config.policy_weight,
+                value_weight=config.value_weight,
+            )
+        )
         if scheduler is not None:
             scheduler.step()
     return losses

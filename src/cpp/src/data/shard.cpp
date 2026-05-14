@@ -165,6 +165,15 @@ void write_manifest(
     std::uint64_t num_games,
     std::uint64_t num_samples,
     const SelfPlayManifestConfig& config) {
+  write_manifest(path, std::vector<std::string>{shard_path}, num_games, num_samples, config);
+}
+
+void write_manifest(
+    const std::string& path,
+    const std::vector<std::string>& shard_paths,
+    std::uint64_t num_games,
+    std::uint64_t num_samples,
+    const SelfPlayManifestConfig& config) {
   const auto parent = std::filesystem::path(path).parent_path();
   if (!parent.empty()) {
     std::filesystem::create_directories(parent);
@@ -180,10 +189,35 @@ void write_manifest(
   out << "  \"num_games\": " << num_games << ",\n";
   out << "  \"num_samples\": " << num_samples << ",\n";
   out << "  \"model_checkpoint\": " << json_escape(config.model_checkpoint) << ",\n";
-  out << "  \"shard_paths\": [" << json_escape(shard_path) << "],\n";
+  out << "  \"dataset_kind\": " << json_escape(config.dataset_kind) << ",\n";
+  out << "  \"shard_paths\": [";
+  for (std::size_t index = 0; index < shard_paths.size(); ++index) {
+    if (index > 0) {
+      out << ", ";
+    }
+    out << json_escape(shard_paths[index]);
+  }
+  out << "],\n";
   out << "  \"config\": {\n";
+  out << "    \"dataset_kind\": " << json_escape(config.dataset_kind) << ",\n";
   out << "    \"model_checkpoint\": " << json_escape(config.model_checkpoint) << ",\n";
   out << "    \"device\": " << json_escape(config.device) << ",\n";
+  out << "    \"curriculum_stage\": " << config.curriculum_stage << ",\n";
+  out << "    \"policy_source\": " << json_escape(config.policy_source) << ",\n";
+  out << "    \"value_source\": " << json_escape(config.value_source) << ",\n";
+  out << "    \"value_loss_weight\": " << config.value_loss_weight << ",\n";
+  out << "    \"shard_size\": " << config.shard_size << ",\n";
+  out << "    \"symmetry_augmentation\": " << json_bool(config.symmetry_augmentation) << ",\n";
+  out << "    \"category_counts\": {";
+  std::size_t category_index = 0;
+  for (const auto& [category, count] : config.category_counts) {
+    if (category_index > 0) {
+      out << ", ";
+    }
+    out << json_escape(category) << ": " << count;
+    ++category_index;
+  }
+  out << "},\n";
   out << "    \"simulations_per_move\": " << config.simulations_per_move << ",\n";
   out << "    \"c_base\": " << config.c_base << ",\n";
   out << "    \"c_init\": " << config.c_init << ",\n";

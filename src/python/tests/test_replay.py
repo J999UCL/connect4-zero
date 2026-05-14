@@ -47,6 +47,16 @@ def test_replay_keeps_latest_manifest_ordered_games(tmp_path):
     assert replay.samples[0].value == -1.0
 
 
+def test_replay_games_all_keeps_entire_chronological_window(tmp_path):
+    first = write_manifest_with_one_sample(tmp_path / "first", 1.0, "2026-05-14T00:00:00Z")
+    second = write_manifest_with_one_sample(tmp_path / "second", 0.0, "2026-05-14T01:00:00Z")
+    third = write_manifest_with_one_sample(tmp_path / "third", -1.0, "2026-05-14T02:00:00Z")
+    replay = ReplayBuffer.from_manifests([third, first, second], replay_games="all")
+    assert replay.metadata()["num_games"] == 3
+    assert len(replay.samples) == 3
+    assert [sample.value for sample in replay.samples] == [1.0, 0.0, -1.0]
+
+
 def test_replay_sorts_manifest_timestamps_before_windowing(tmp_path):
     first = write_manifest_with_one_sample(tmp_path / "first", 1.0, "2026-05-14T01:00:00Z")
     second = write_manifest_with_one_sample(tmp_path / "second", -1.0, "2026-05-14T00:00:00Z")

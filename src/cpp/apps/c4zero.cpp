@@ -1,5 +1,6 @@
 #include "c4zero/arena/arena.hpp"
 #include "c4zero/bots/heuristic.hpp"
+#include "c4zero/curriculum/stage0.hpp"
 #include "c4zero/data/shard.hpp"
 #include "c4zero/model/torchscript.hpp"
 #include "c4zero/search/puct.hpp"
@@ -67,6 +68,7 @@ void usage() {
       << "  bots\n"
       << "  botmatch --bot-a center --bot-b tactical --games 20\n"
       << "  arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 20 --simulations 800\n"
+      << "  curriculum --stage 0 --samples 1000000 --shard-size 100000 --out /tmp/thakwani/rl-data/curriculum/stage0-v1\n"
       << "  selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --search-threads 4 --out runs/smoke\n";
 }
 
@@ -90,6 +92,30 @@ int run_arena(int argc, char** argv) {
   config.seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
   const auto result = c4zero::arena::play_checkpoint_match(config);
   std::cout << result.summary() << "\n";
+  return 0;
+}
+
+int run_curriculum(int argc, char** argv) {
+  const int stage = to_int(arg_value(argc, argv, "--stage", "0"));
+  if (stage != 0) {
+    throw std::invalid_argument("only curriculum --stage 0 is supported");
+  }
+  c4zero::curriculum::Stage0Config config;
+  config.samples = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--samples", "1000000")));
+  config.shard_size = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--shard-size", "100000")));
+  config.seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
+  config.output_dir = arg_value(argc, argv, "--out", "/tmp/thakwani/rl-data/curriculum/stage0-v1");
+  config.use_symmetries = !has_arg(argc, argv, "--no-symmetries");
+  config.git_commit = git_commit();
+
+  const auto result = c4zero::curriculum::write_stage0_dataset(config);
+  std::cout << "curriculum_stage=0"
+            << " samples=" << result.samples
+            << " shards=" << result.shards
+            << " manifest=" << result.manifest_path << "\n";
+  for (const auto& [category, count] : result.category_counts) {
+    std::cout << "category=" << category << " count=" << count << "\n";
+  }
   return 0;
 }
 
@@ -205,6 +231,9 @@ int main(int argc, char** argv) {
     }
     if (command == "arena") {
       return run_arena(argc, argv);
+    }
+    if (command == "curriculum") {
+      return run_curriculum(argc, argv);
     }
     if (command == "selfplay") {
       return run_selfplay(argc, argv);

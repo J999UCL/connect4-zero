@@ -59,6 +59,18 @@ def test_train_step_changes_weights_and_checkpoint_round_trip(tmp_path):
     assert loaded_scheduler.state_dict()["last_epoch"] == scheduler.state_dict()["last_epoch"]
 
 
+def test_policy_only_train_step_optimizes_policy_loss_but_reports_value_loss():
+    torch.manual_seed(3)
+    model = create_model("tiny")
+    optimizer = make_optimizer(model, TrainConfig(batch_size=2, learning_rate=0.01))
+    breakdown = train_step(model, optimizer, samples(), policy_weight=1.0, value_weight=0.0)
+
+    assert breakdown.total == pytest.approx(breakdown.policy)
+    assert breakdown.optimized_total == pytest.approx(breakdown.policy)
+    assert breakdown.value >= 0.0
+    assert breakdown.paper_total_loss > breakdown.optimized_total
+
+
 def test_checkpoint_rejects_mutated_version_metadata(tmp_path):
     model = create_model("tiny")
     optimizer = make_optimizer(model, TrainConfig(batch_size=2, learning_rate=0.01))

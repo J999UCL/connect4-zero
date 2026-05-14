@@ -49,6 +49,9 @@ def train_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--resume", type=Path)
+    parser.add_argument("--replay-games", default=None, help="Replay window game count, or 'all' for curriculum data.")
+    parser.add_argument("--policy-weight", type=float, default=1.0)
+    parser.add_argument("--value-weight", type=float, default=1.0)
     args = parser.parse_args(argv)
 
     payload = None
@@ -62,8 +65,16 @@ def train_main(argv: list[str] | None = None) -> int:
         model = create_model(preset).to(args.device)
 
     replay_config = ReplayConfig.for_preset(preset)
-    replay = ReplayBuffer.from_manifests(args.manifest, replay_config.replay_games)
-    train_config = TrainConfig(batch_size=min(replay_config.batch_size, len(replay.samples)), seed=args.seed)
+    replay_games: int | str = replay_config.replay_games
+    if args.replay_games is not None:
+        replay_games = "all" if args.replay_games == "all" else int(args.replay_games)
+    replay = ReplayBuffer.from_manifests(args.manifest, replay_games)
+    train_config = TrainConfig(
+        batch_size=min(replay_config.batch_size, len(replay.samples)),
+        seed=args.seed,
+        policy_weight=args.policy_weight,
+        value_weight=args.value_weight,
+    )
     optimizer = make_optimizer(model, train_config)
     scheduler = make_scheduler(optimizer)
     start_step = 0
@@ -81,6 +92,9 @@ def train_main(argv: list[str] | None = None) -> int:
         "last_policy_loss": losses[-1].policy,
         "last_value_loss": losses[-1].value,
         "last_l2_regularization": losses[-1].l2_regularization,
+        "policy_weight": args.policy_weight,
+        "value_weight": args.value_weight,
+        "replay_games": replay_games,
         **replay.metadata(),
     }
     save_checkpoint(args.out, model, optimizer, scheduler, step=final_step, epoch=start_epoch, replay_manifests=args.manifest, metrics=metrics)

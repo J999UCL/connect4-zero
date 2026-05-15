@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import torch
@@ -33,3 +34,17 @@ def export_checkpoint(
     path = Path(output_path) if output_path is not None else checkpoint_dir / "inference.ts"
     export_torchscript_model(model, path, device=device)
     return path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Export a c4zero PyTorch checkpoint to TorchScript for C++ inference.")
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--out", type=Path)
+    parser.add_argument("--device", default="cpu")
+    args = parser.parse_args(argv)
+    print(export_checkpoint(args.checkpoint, args.out, device=args.device))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

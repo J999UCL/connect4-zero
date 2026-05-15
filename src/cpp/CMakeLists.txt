@@ -62,6 +62,11 @@ add_library(c4zero_arena
 )
 target_link_libraries(c4zero_arena PUBLIC c4zero_core c4zero_search c4zero_model "${TORCH_LIBRARIES}")
 
+add_library(c4zero_play
+  src/play/terminal.cpp
+)
+target_link_libraries(c4zero_play PUBLIC c4zero_core c4zero_search c4zero_model "${TORCH_LIBRARIES}")
+
 add_executable(c4zero apps/c4zero.cpp)
 target_link_libraries(c4zero PRIVATE
   c4zero_core
@@ -72,6 +77,7 @@ target_link_libraries(c4zero PRIVATE
   c4zero_selfplay
   c4zero_arena
   c4zero_model
+  c4zero_play
   "${TORCH_LIBRARIES}"
 )
 
@@ -104,3 +110,7 @@ add_test(NAME test_arena COMMAND test_arena)
 add_executable(test_torchscript_evaluator tests/test_torchscript_evaluator.cpp)
 target_link_libraries(test_torchscript_evaluator PRIVATE c4zero_core c4zero_search c4zero_model "${TORCH_LIBRARIES}")
 add_test(NAME test_torchscript_evaluator COMMAND test_torchscript_evaluator)
+
+add_executable(test_play tests/test_play.cpp)
+target_link_libraries(test_play PRIVATE c4zero_core c4zero_search c4zero_model c4zero_play "${TORCH_LIBRARIES}")
+add_test(NAME test_play COMMAND test_play)

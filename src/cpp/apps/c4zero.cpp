@@ -3,6 +3,7 @@
 #include "c4zero/curriculum/stage0.hpp"
 #include "c4zero/data/shard.hpp"
 #include "c4zero/model/torchscript.hpp"
+#include "c4zero/play/terminal.hpp"
 #include "c4zero/search/puct.hpp"
 #include "c4zero/selfplay/selfplay.hpp"
 #include "c4zero/version/info.hpp"
@@ -68,6 +69,7 @@ void usage() {
       << "  bots\n"
       << "  botmatch --bot-a center --bot-b tactical --games 20\n"
       << "  arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 20 --simulations 800\n"
+      << "  play --model checkpoints/current/inference.ts --simulations 800 --search-threads 4\n"
       << "  curriculum --stage 0 --samples 1000000 --shard-size 100000 --out /tmp/thakwani/rl-data/curriculum/stage0-v1\n"
       << "  selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --search-threads 4 --out runs/smoke\n";
 }
@@ -203,6 +205,21 @@ int run_selfplay(int argc, char** argv) {
   return 0;
 }
 
+int run_play(int argc, char** argv) {
+  c4zero::play::TerminalPlayConfig config;
+  config.model_path = arg_value(argc, argv, "--model", "");
+  config.device = arg_value(argc, argv, "--device", "cpu");
+  config.simulations = to_int(arg_value(argc, argv, "--simulations", "800"));
+  config.search_threads = to_int(arg_value(argc, argv, "--search-threads", "4"));
+  config.virtual_loss = to_float(arg_value(argc, argv, "--virtual-loss", "1.0"));
+  config.inference_batch_size = to_int(arg_value(argc, argv, "--inference-batch-size", "128"));
+  config.inference_max_wait_us = to_int(arg_value(argc, argv, "--inference-max-wait-us", "2000"));
+  config.seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
+  config.bot_first = has_arg(argc, argv, "--bot-first");
+  config.value_mode = c4zero::play::parse_value_mode(arg_value(argc, argv, "--value-mode", "zero"));
+  return c4zero::play::run_terminal_game(std::cin, std::cout, config);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -237,6 +254,9 @@ int main(int argc, char** argv) {
     }
     if (command == "selfplay") {
       return run_selfplay(argc, argv);
+    }
+    if (command == "play") {
+      return run_play(argc, argv);
     }
     usage();
     return 1;

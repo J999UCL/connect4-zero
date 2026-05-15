@@ -14,6 +14,8 @@ const resetButton = document.querySelector("#reset");
 const spacing = 1.18;
 const pieceRadius = 0.32;
 const boardOffset = (3 * spacing) / 2;
+const boardOrigin = new THREE.Vector3(0, 0.95, 0);
+const boardBaseCenter = boardOrigin.clone();
 let state = null;
 let thinking = false;
 
@@ -21,7 +23,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x081012);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-camera.position.set(5.8, 5.0, 7.4);
+camera.position.copy(boardBaseCenter).add(new THREE.Vector3(4.8, 5.8, 8.2));
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -29,9 +31,10 @@ sceneHost.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.target.set(-1.65, 2.0, 0);
+controls.target.copy(boardBaseCenter);
 controls.minDistance = 5.0;
 controls.maxDistance = 16;
+controls.update();
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.68));
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.7);
@@ -40,8 +43,8 @@ scene.add(keyLight);
 
 const boardGroup = new THREE.Group();
 const pieceGroup = new THREE.Group();
-boardGroup.position.set(-1.65, 0.95, 0);
-pieceGroup.position.set(-1.65, 0.95, 0);
+boardGroup.position.copy(boardOrigin);
+pieceGroup.position.copy(boardOrigin);
 scene.add(boardGroup);
 scene.add(pieceGroup);
 
@@ -302,7 +305,7 @@ function resize() {
   const rect = sceneHost.getBoundingClientRect();
   camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
   camera.updateProjectionMatrix();
-  renderer.setSize(rect.width, rect.height, false);
+  renderer.setSize(rect.width, rect.height);
 }
 
 function animate() {

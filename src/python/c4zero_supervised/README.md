@@ -17,7 +17,6 @@ python -m c4zero_supervised.stage0_train \
   --preset small \
   --train-manifest /tmp/thakwani/rl-data/curriculum/stage0-v1/manifest.json \
   --val-manifest /tmp/thakwani/rl-data/curriculum/stage0-v1-val/manifest.json \
-  --test-manifest /tmp/thakwani/rl-data/curriculum/stage0-v1-test/manifest.json \
   --batch-size 2048 \
   --epochs 3 \
   --eval-every-steps 100 \
@@ -25,3 +24,14 @@ python -m c4zero_supervised.stage0_train \
   --out /tmp/thakwani/rl-runs/stage0-small
 ```
 
+Do not pass the test split to training. Test is reserved for a final explicit
+evaluation after checkpoint/model-selection decisions are frozen:
+
+```bash
+python -m c4zero_supervised.stage0_eval \
+  --checkpoint /tmp/thakwani/rl-runs/stage0-small \
+  --manifest /tmp/thakwani/rl-data/curriculum/stage0-v1-test/manifest.json \
+  --batch-size 2048 \
+  --device cuda \
+  --out /tmp/thakwani/rl-runs/stage0-small/test-final.json
+```

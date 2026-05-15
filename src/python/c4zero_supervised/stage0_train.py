@@ -21,7 +21,6 @@ class Stage0TrainConfig:
     preset: str
     train_manifest: str
     val_manifest: str | None
-    test_manifest: str | None
     batch_size: int
     epochs: int
     max_steps: int | None
@@ -74,7 +73,6 @@ def train(
     model: AlphaZeroNet,
     train_dataset: Stage0Dataset,
     val_dataset: Stage0Dataset | None,
-    test_dataset: Stage0Dataset | None,
     config: Stage0TrainConfig,
     out_dir: Path,
     start_step: int = 0,
@@ -129,14 +127,6 @@ def train(
             record["validation"] = evaluate(model, val_dataset, config.batch_size, device)
         log_record(record)
 
-    if test_dataset is not None:
-        log_record(
-            {
-                "kind": "test",
-                "step": global_step,
-                "test": evaluate(model, test_dataset, config.batch_size, device),
-            }
-        )
     return optimizer, history, global_step
 
 
@@ -145,7 +135,6 @@ def train_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--preset", choices=["tiny", "small", "medium"], default="small")
     parser.add_argument("--train-manifest", required=True)
     parser.add_argument("--val-manifest")
-    parser.add_argument("--test-manifest")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--batch-size", type=int, required=True)
     parser.add_argument("--epochs", type=int, required=True)
@@ -163,7 +152,6 @@ def train_main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     train_dataset = Stage0Dataset.from_manifest(args.train_manifest)
     val_dataset = Stage0Dataset.from_manifest(args.val_manifest) if args.val_manifest else None
-    test_dataset = Stage0Dataset.from_manifest(args.test_manifest) if args.test_manifest else None
 
     start_step = 0
     optimizer_state = None
@@ -180,7 +168,6 @@ def train_main(argv: list[str] | None = None) -> int:
         preset=args.preset,
         train_manifest=str(Path(args.train_manifest)),
         val_manifest=str(Path(args.val_manifest)) if args.val_manifest else None,
-        test_manifest=str(Path(args.test_manifest)) if args.test_manifest else None,
         batch_size=args.batch_size,
         epochs=args.epochs,
         max_steps=args.max_steps,
@@ -207,7 +194,7 @@ def train_main(argv: list[str] | None = None) -> int:
         args.out / "datasets.json",
         {
             name: dataset
-            for name, dataset in [("train", train_dataset), ("validation", val_dataset), ("test", test_dataset)]
+            for name, dataset in [("train", train_dataset), ("validation", val_dataset)]
             if dataset is not None
         },
     )
@@ -216,7 +203,6 @@ def train_main(argv: list[str] | None = None) -> int:
         model,
         train_dataset,
         val_dataset,
-        test_dataset,
         config,
         args.out,
         start_step=start_step,
@@ -236,7 +222,7 @@ def train_main(argv: list[str] | None = None) -> int:
             "final": final_metrics,
             "train_samples": len(train_dataset),
             "validation_samples": len(val_dataset) if val_dataset is not None else 0,
-            "test_samples": len(test_dataset) if test_dataset is not None else 0,
+            "test_samples": 0,
         },
     )
     export_torchscript_model(model, args.out / "inference.ts", device=args.device)

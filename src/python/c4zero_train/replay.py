@@ -6,6 +6,7 @@ from pathlib import Path
 import random
 
 from c4zero_tools.datasets import Sample, read_shard, validate_manifest
+from c4zero_train.symmetry import transform_sample
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +65,11 @@ class ReplayBuffer:
         samples = [sample for game_id in kept_game_ids for sample in by_game[game_id]]
         return cls(samples, num_games=len(kept_game_ids))
 
-    def sample_batch(self, batch_size: int, rng: random.Random) -> list[Sample]:
-        return [self.samples[rng.randrange(len(self.samples))] for _ in range(batch_size)]
+    def sample_batch(self, batch_size: int, rng: random.Random, augment_symmetries: bool = False) -> list[Sample]:
+        batch = [self.samples[rng.randrange(len(self.samples))] for _ in range(batch_size)]
+        if not augment_symmetries:
+            return batch
+        return [transform_sample(sample, rng.randrange(8)) for sample in batch]
 
     def metadata(self) -> dict[str, int]:
         return {

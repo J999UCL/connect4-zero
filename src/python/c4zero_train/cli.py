@@ -54,6 +54,7 @@ def train_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replay-games", default=None, help="Replay window game count, or 'all' for curriculum data.")
     parser.add_argument("--policy-weight", type=float, default=1.0)
     parser.add_argument("--value-weight", type=float, default=1.0)
+    parser.add_argument("--augment-symmetries", action="store_true", help="Apply random 4x4 base-plane symmetries during replay sampling.")
     parser.add_argument("--reset-optimizer", action="store_true", help="Resume model weights but start a fresh optimizer/scheduler.")
     parser.add_argument("--log-every-steps", type=int, default=0)
     args = parser.parse_args(argv)
@@ -78,6 +79,7 @@ def train_main(argv: list[str] | None = None) -> int:
         seed=args.seed,
         policy_weight=args.policy_weight,
         value_weight=args.value_weight,
+        augment_symmetries=args.augment_symmetries,
     )
     optimizer = make_optimizer(model, train_config)
     scheduler = make_scheduler(optimizer)
@@ -133,6 +135,7 @@ def train_main(argv: list[str] | None = None) -> int:
         "last_l2_regularization": losses[-1].l2_regularization,
         "policy_weight": args.policy_weight,
         "value_weight": args.value_weight,
+        "symmetry_augmentation": args.augment_symmetries,
         "replay_games": replay_games,
         **replay.metadata(),
     }

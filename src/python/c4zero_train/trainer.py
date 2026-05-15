@@ -21,6 +21,7 @@ class TrainConfig:
     seed: int = 1
     policy_weight: float = 1.0
     value_weight: float = 1.0
+    augment_symmetries: bool = False
 
 
 def make_optimizer(model: AlphaZeroNet, config: TrainConfig) -> torch.optim.SGD:
@@ -99,7 +100,7 @@ def train_steps(
     rng = random.Random(config.seed)
     losses: list[LossBreakdown] = []
     for _ in range(steps):
-        samples = replay.sample_batch(config.batch_size, rng)
+        samples = replay.sample_batch(config.batch_size, rng, augment_symmetries=config.augment_symmetries)
         losses.append(
             train_step(
                 model,

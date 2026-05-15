@@ -13,7 +13,15 @@ from c4zero_train.checkpoint import load_checkpoint, restore_optimizer_and_sched
 from c4zero_train.export import export_checkpoint, export_torchscript_model
 from c4zero_train.model import create_model, count_parameters
 from c4zero_train.replay import ReplayBuffer, ReplayConfig
-from c4zero_train.trainer import TrainConfig, make_optimizer, make_scheduler, train_step
+from c4zero_train.trainer import TrainConfig, make_optimizer, make_scheduler, sample_training_batch, train_step
+
+
+def _resolve_symmetry_mode(symmetry_mode: str | None, augment_symmetries: bool) -> str:
+    if symmetry_mode is None:
+        return "random" if augment_symmetries else "none"
+    if augment_symmetries and symmetry_mode != "random":
+        raise ValueError("--augment-symmetries is equivalent to --symmetry-mode random")
+    return symmetry_mode
 
 
 def inspect_model_main(argv: list[str] | None = None) -> int:
@@ -55,9 +63,12 @@ def train_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--policy-weight", type=float, default=1.0)
     parser.add_argument("--value-weight", type=float, default=1.0)
     parser.add_argument("--augment-symmetries", action="store_true", help="Apply random 4x4 base-plane symmetries during replay sampling.")
+    parser.add_argument("--symmetry-mode", choices=["none", "random", "orbit"])
+    parser.add_argument("--batch-size", type=int, help="Training batch size; in orbit mode this is the base batch before 8-way expansion.")
     parser.add_argument("--reset-optimizer", action="store_true", help="Resume model weights but start a fresh optimizer/scheduler.")
     parser.add_argument("--log-every-steps", type=int, default=0)
     args = parser.parse_args(argv)
+    symmetry_mode = _resolve_symmetry_mode(args.symmetry_mode, args.augment_symmetries)
 
     payload = None
     if args.resume is not None:
@@ -74,12 +85,14 @@ def train_main(argv: list[str] | None = None) -> int:
     if args.replay_games is not None:
         replay_games = "all" if args.replay_games == "all" else int(args.replay_games)
     replay = ReplayBuffer.from_manifests(args.manifest, replay_games)
+    configured_batch_size = args.batch_size if args.batch_size is not None else replay_config.batch_size
     train_config = TrainConfig(
-        batch_size=min(replay_config.batch_size, len(replay.samples)),
+        batch_size=min(configured_batch_size, len(replay.samples)),
         seed=args.seed,
         policy_weight=args.policy_weight,
         value_weight=args.value_weight,
         augment_symmetries=args.augment_symmetries,
+        symmetry_mode=symmetry_mode,
     )
     optimizer = make_optimizer(model, train_config)
     scheduler = make_scheduler(optimizer)
@@ -92,8 +105,10 @@ def train_main(argv: list[str] | None = None) -> int:
     losses = []
     rng = random.Random(train_config.seed)
     started_at = time.perf_counter()
+    trained_samples = 0
     for local_step in range(1, args.steps + 1):
-        samples = replay.sample_batch(train_config.batch_size, rng)
+        samples = sample_training_batch(replay, train_config, rng)
+        trained_samples += len(samples)
         loss = train_step(
             model,
             optimizer,
@@ -119,7 +134,10 @@ def train_main(argv: list[str] | None = None) -> int:
                         "value_loss": loss.value,
                         "paper_total_loss": loss.paper_total_loss,
                         "lr": float(optimizer.param_groups[0]["lr"]),
-                        "samples_per_sec": (local_step * train_config.batch_size) / elapsed,
+                        "base_batch_size": train_config.batch_size,
+                        "effective_batch_size": len(samples),
+                        "symmetry_mode": symmetry_mode,
+                        "samples_per_sec": trained_samples / elapsed,
                     },
                     sort_keys=True,
                 ),
@@ -135,7 +153,10 @@ def train_main(argv: list[str] | None = None) -> int:
         "last_l2_regularization": losses[-1].l2_regularization,
         "policy_weight": args.policy_weight,
         "value_weight": args.value_weight,
-        "symmetry_augmentation": args.augment_symmetries,
+        "symmetry_augmentation": symmetry_mode != "none",
+        "symmetry_mode": symmetry_mode,
+        "base_batch_size": train_config.batch_size,
+        "effective_batch_size": train_config.batch_size * (8 if symmetry_mode == "orbit" else 1),
         "replay_games": replay_games,
         **replay.metadata(),
     }

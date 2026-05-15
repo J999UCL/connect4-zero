@@ -66,10 +66,23 @@ class ReplayBuffer:
         return cls(samples, num_games=len(kept_game_ids))
 
     def sample_batch(self, batch_size: int, rng: random.Random, augment_symmetries: bool = False) -> list[Sample]:
-        batch = [self.samples[rng.randrange(len(self.samples))] for _ in range(batch_size)]
+        batch = self.sample_base_batch(batch_size, rng)
         if not augment_symmetries:
             return batch
         return [transform_sample(sample, rng.randrange(8)) for sample in batch]
+
+    def sample_base_batch(self, batch_size: int, rng: random.Random) -> list[Sample]:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        return [self.samples[rng.randrange(len(self.samples))] for _ in range(batch_size)]
+
+    def sample_orbit_batch(self, base_batch_size: int, rng: random.Random) -> list[Sample]:
+        base_batch = self.sample_base_batch(base_batch_size, rng)
+        return [
+            transform_sample(sample, symmetry)
+            for sample in base_batch
+            for symmetry in range(8)
+        ]
 
     def metadata(self) -> dict[str, int]:
         return {

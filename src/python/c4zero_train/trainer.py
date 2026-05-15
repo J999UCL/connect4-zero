@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
+from typing import Literal
 
 import numpy as np
 import torch
@@ -10,6 +11,8 @@ from c4zero_train.encoding import encode_samples
 from c4zero_train.losses import LossBreakdown, alpha_zero_loss
 from c4zero_train.model import AlphaZeroNet
 from c4zero_train.replay import ReplayBuffer
+
+SymmetryMode = Literal["none", "random", "orbit"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +25,7 @@ class TrainConfig:
     policy_weight: float = 1.0
     value_weight: float = 1.0
     augment_symmetries: bool = False
+    symmetry_mode: SymmetryMode = "none"
 
 
 def make_optimizer(model: AlphaZeroNet, config: TrainConfig) -> torch.optim.SGD:
@@ -88,6 +92,19 @@ def train_step(
     )
 
 
+def sample_training_batch(replay: ReplayBuffer, config: TrainConfig, rng: random.Random):
+    mode: SymmetryMode = config.symmetry_mode
+    if config.augment_symmetries and mode == "none":
+        mode = "random"
+    if mode == "none":
+        return replay.sample_batch(config.batch_size, rng, augment_symmetries=False)
+    if mode == "random":
+        return replay.sample_batch(config.batch_size, rng, augment_symmetries=True)
+    if mode == "orbit":
+        return replay.sample_orbit_batch(config.batch_size, rng)
+    raise ValueError(f"unknown symmetry mode: {mode}")
+
+
 def train_steps(
     model: AlphaZeroNet,
     replay: ReplayBuffer,
@@ -100,7 +117,7 @@ def train_steps(
     rng = random.Random(config.seed)
     losses: list[LossBreakdown] = []
     for _ in range(steps):
-        samples = replay.sample_batch(config.batch_size, rng, augment_symmetries=config.augment_symmetries)
+        samples = sample_training_batch(replay, config, rng)
         losses.append(
             train_step(
                 model,

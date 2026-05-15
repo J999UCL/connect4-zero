@@ -70,3 +70,23 @@ def test_replay_batch_can_apply_random_symmetry_augmentation():
         assert augmented.policy.sum() == np.float32(1.0)
         assert int(augmented.visit_counts.sum()) == 4
         assert augmented.legal_mask & (1 << augmented.action)
+
+
+def test_replay_orbit_batch_expands_each_base_sample_to_all_symmetries():
+    sample = make_sample()
+    replay = ReplayBuffer([sample])
+    batch = replay.sample_orbit_batch(2, random.Random(1))
+
+    assert len(batch) == 16
+    for offset in (0, 8):
+        for symmetry in Symmetry:
+            expected = transform_sample(sample, symmetry)
+            actual = batch[offset + int(symmetry)]
+            assert actual.current_bits == expected.current_bits
+            assert actual.opponent_bits == expected.opponent_bits
+            assert actual.legal_mask == expected.legal_mask
+            assert actual.action == expected.action
+            assert np.array_equal(actual.policy, expected.policy)
+            assert np.array_equal(actual.visit_counts, expected.visit_counts)
+            assert actual.value == sample.value
+            assert actual.ply == sample.ply

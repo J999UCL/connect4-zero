@@ -1,0 +1,103 @@
+import numpy as np
+
+from c4zero_tools.datasets import Sample
+import c4zero_train.cli as train_cli
+from c4zero_train.losses import LossBreakdown
+
+
+def sample() -> Sample:
+    return Sample(
+        current_bits=0,
+        opponent_bits=0,
+        heights=tuple([0] * 16),
+        ply=0,
+        game_id=0,
+        legal_mask=0xFFFF,
+        action=0,
+        policy=np.full(16, 1.0 / 16.0, dtype=np.float32),
+        visit_counts=np.ones(16, dtype=np.uint32),
+        value=0.0,
+    )
+
+
+class FakeReplay:
+    def __init__(self):
+        self.samples = [sample()] * 8
+        self.sample_batch_calls = []
+        self.sample_orbit_batch_calls = []
+
+    def sample_batch(self, batch_size, rng, augment_symmetries=False):
+        self.sample_batch_calls.append((batch_size, augment_symmetries))
+        return [sample()] * batch_size
+
+    def sample_orbit_batch(self, base_batch_size, rng):
+        self.sample_orbit_batch_calls.append(base_batch_size)
+        return [sample()] * (base_batch_size * 8)
+
+    def metadata(self):
+        return {"num_samples": len(self.samples), "num_games": 1}
+
+
+def patch_training(monkeypatch, replay):
+    monkeypatch.setattr(train_cli.ReplayBuffer, "from_manifests", lambda _manifests, _replay_games: replay)
+    monkeypatch.setattr(
+        train_cli,
+        "train_step",
+        lambda *_args, **_kwargs: LossBreakdown(
+            total=1.0,
+            policy=0.7,
+            value=0.3,
+            l2_regularization=0.1,
+            paper_total_loss=1.1,
+            optimized_total=1.0,
+        ),
+    )
+    monkeypatch.setattr(train_cli, "save_checkpoint", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(train_cli, "export_torchscript_model", lambda *_args, **_kwargs: None)
+
+
+def test_train_cli_random_symmetry_flag_reaches_replay(monkeypatch, tmp_path):
+    replay = FakeReplay()
+    patch_training(monkeypatch, replay)
+
+    train_cli.train_main(
+        [
+            "--preset",
+            "tiny",
+            "--manifest",
+            "manifest.json",
+            "--steps",
+            "1",
+            "--out",
+            str(tmp_path / "out"),
+            "--augment-symmetries",
+        ]
+    )
+
+    assert replay.sample_batch_calls == [(8, True)]
+    assert replay.sample_orbit_batch_calls == []
+
+
+def test_train_cli_orbit_symmetry_mode_uses_orbit_batch(monkeypatch, tmp_path):
+    replay = FakeReplay()
+    patch_training(monkeypatch, replay)
+
+    train_cli.train_main(
+        [
+            "--preset",
+            "tiny",
+            "--manifest",
+            "manifest.json",
+            "--steps",
+            "1",
+            "--out",
+            str(tmp_path / "out"),
+            "--batch-size",
+            "2",
+            "--symmetry-mode",
+            "orbit",
+        ]
+    )
+
+    assert replay.sample_batch_calls == []
+    assert replay.sample_orbit_batch_calls == [2]

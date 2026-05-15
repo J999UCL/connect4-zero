@@ -56,11 +56,13 @@ struct SelfPlayManifestConfig {
   double root_exploration_fraction = 0.25;
   int temperature_sampling_plies = 30;
   bool add_root_noise = true;
+  int game_workers = 1;
   int search_threads = 1;
   float virtual_loss = 1.0f;
   int inference_batch_size = 1;
   int inference_max_wait_us = 0;
   std::string evaluator_type = "uniform";
+  std::string value_mode = "model";
   std::uint64_t seed = 1;
   std::string git_commit;
 };

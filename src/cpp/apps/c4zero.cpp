@@ -8,14 +8,21 @@
 #include "c4zero/selfplay/selfplay.hpp"
 #include "c4zero/version/info.hpp"
 
-#include <filesystem>
+#include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdint>
+#include <exception>
+#include <filesystem>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -71,7 +78,45 @@ void usage() {
       << "  arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 20 --simulations 800\n"
       << "  play --model checkpoints/current/inference.ts --simulations 800 --search-threads 4\n"
       << "  curriculum --stage 0 --samples 1000000 --shard-size 100000 --out /tmp/thakwani/rl-data/curriculum/stage0-v1\n"
-      << "  selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --search-threads 4 --out runs/smoke\n";
+      << "  selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --game-workers 4 --search-threads 2 --out runs/smoke\n";
+}
+
+class ValueOverrideEvaluator final : public c4zero::search::Evaluator {
+ public:
+  ValueOverrideEvaluator(c4zero::search::Evaluator& evaluator, c4zero::play::ValueMode mode)
+      : evaluator_(evaluator), mode_(mode) {}
+
+  c4zero::search::Evaluation evaluate(const c4zero::core::Position& position) override {
+    auto evaluation = evaluator_.evaluate(position);
+    if (mode_ == c4zero::play::ValueMode::Zero) {
+      evaluation.value = 0.0f;
+    }
+    return evaluation;
+  }
+
+ private:
+  c4zero::search::Evaluator& evaluator_;
+  c4zero::play::ValueMode mode_;
+};
+
+struct SelfPlayRunTotals {
+  int completed_games = 0;
+  int total_plies = 0;
+  int completed_simulations = 0;
+  int leaf_evaluations = 0;
+  int terminal_evaluations = 0;
+  int max_depth = 0;
+  double search_time_ms = 0.0;
+};
+
+void add_game_totals(SelfPlayRunTotals& totals, const c4zero::selfplay::GeneratedGame& game) {
+  totals.completed_games += 1;
+  totals.total_plies += game.plies;
+  totals.completed_simulations += game.completed_simulations;
+  totals.leaf_evaluations += game.leaf_evaluations;
+  totals.terminal_evaluations += game.terminal_evaluations;
+  totals.max_depth = std::max(totals.max_depth, game.max_depth);
+  totals.search_time_ms += game.search_time_ms;
 }
 
 int run_botmatch(int argc, char** argv) {
@@ -127,11 +172,19 @@ int run_selfplay(int argc, char** argv) {
   const std::string out_dir = arg_value(argc, argv, "--out", "runs/c4zero-smoke");
   const std::string model_path = arg_value(argc, argv, "--model", "");
   const std::string device_name = arg_value(argc, argv, "--device", "cpu");
+  const int game_workers = to_int(arg_value(argc, argv, "--game-workers", "1"));
   const int search_threads = to_int(arg_value(argc, argv, "--search-threads", "4"));
   const float virtual_loss = to_float(arg_value(argc, argv, "--virtual-loss", "1.0"));
   const int inference_batch_size = to_int(arg_value(argc, argv, "--inference-batch-size", "128"));
   const int inference_max_wait_us = to_int(arg_value(argc, argv, "--inference-max-wait-us", "2000"));
   const auto seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
+  const auto value_mode = c4zero::play::parse_value_mode(arg_value(argc, argv, "--value-mode", "zero"));
+  if (games < 0) {
+    throw std::invalid_argument("selfplay games must be non-negative");
+  }
+  if (game_workers <= 0) {
+    throw std::invalid_argument("selfplay game workers must be positive");
+  }
 
   c4zero::search::UniformEvaluator evaluator;
   std::unique_ptr<c4zero::model::AsyncBatchedTorchScriptEvaluator> torchscript_evaluator;
@@ -145,6 +198,7 @@ int run_selfplay(int argc, char** argv) {
         std::make_unique<c4zero::model::AsyncBatchedTorchScriptEvaluator>(model_path, device, inference_config);
     active_evaluator = torchscript_evaluator.get();
   }
+  ValueOverrideEvaluator value_evaluator(*active_evaluator, value_mode);
   c4zero::selfplay::SelfPlayConfig config;
   config.games = games;
   config.mcts.simulations_per_move = simulations;
@@ -152,18 +206,73 @@ int run_selfplay(int argc, char** argv) {
   config.mcts.virtual_loss = virtual_loss;
   config.seed = seed;
 
+  const int worker_count = std::max(1, std::min(game_workers, std::max(games, 1)));
+  const auto run_started = std::chrono::steady_clock::now();
+  std::atomic<int> next_game{0};
+  std::atomic<bool> stop_workers{false};
+  std::exception_ptr worker_error;
+  std::mutex mutex;
+  SelfPlayRunTotals totals;
+  std::vector<c4zero::selfplay::GeneratedGame> generated_games(static_cast<std::size_t>(games));
+
+  auto worker = [&](int worker_id) {
+    while (true) {
+      if (stop_workers.load()) {
+        return;
+      }
+      const int game = next_game.fetch_add(1);
+      if (game >= games) {
+        return;
+      }
+      try {
+        auto generated = c4zero::selfplay::generate_game(value_evaluator, config, static_cast<std::uint64_t>(game));
+        const auto elapsed =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - run_started).count();
+        std::lock_guard<std::mutex> lock(mutex);
+        add_game_totals(totals, generated);
+        const int completed = totals.completed_games;
+        std::cout << "game=" << game
+                  << " worker=" << worker_id
+                  << " completed=" << completed << "/" << games
+                  << " plies=" << generated.plies
+                  << " terminal=" << generated.terminal_value
+                  << " samples=" << generated.samples.size()
+                  << " simulations=" << generated.completed_simulations
+                  << " leaf_evals=" << generated.leaf_evaluations
+                  << " terminal_evals=" << generated.terminal_evaluations
+                  << " max_depth=" << generated.max_depth
+                  << " search_ms=" << generated.search_time_ms
+                  << " elapsed_sec=" << elapsed
+                  << " games_per_sec=" << (elapsed <= 0.0 ? 0.0 : static_cast<double>(completed) / elapsed)
+                  << " samples_per_sec=" << (elapsed <= 0.0 ? 0.0 : static_cast<double>(totals.total_plies) / elapsed)
+                  << "\n";
+        generated_games[static_cast<std::size_t>(game)] = std::move(generated);
+      } catch (...) {
+        std::lock_guard<std::mutex> lock(mutex);
+        stop_workers.store(true);
+        if (!worker_error) {
+          worker_error = std::current_exception();
+        }
+        return;
+      }
+    }
+  };
+
+  std::vector<std::thread> workers;
+  workers.reserve(static_cast<std::size_t>(worker_count));
+  for (int worker_id = 0; worker_id < worker_count; ++worker_id) {
+    workers.emplace_back(worker, worker_id);
+  }
+  for (auto& thread : workers) {
+    thread.join();
+  }
+  if (worker_error) {
+    std::rethrow_exception(worker_error);
+  }
+
   std::vector<c4zero::data::SelfPlaySample> all_samples;
-  for (int game = 0; game < games; ++game) {
-    auto generated = c4zero::selfplay::generate_game(*active_evaluator, config, static_cast<std::uint64_t>(game));
+  for (const auto& generated : generated_games) {
     all_samples.insert(all_samples.end(), generated.samples.begin(), generated.samples.end());
-    std::cout << "game=" << game
-              << " plies=" << generated.plies
-              << " terminal=" << generated.terminal_value
-              << " simulations=" << generated.completed_simulations
-              << " leaf_evals=" << generated.leaf_evaluations
-              << " terminal_evals=" << generated.terminal_evaluations
-              << " max_depth=" << generated.max_depth
-              << " search_ms=" << generated.search_time_ms << "\n";
   }
   if (torchscript_evaluator) {
     const auto stats = torchscript_evaluator->stats();
@@ -174,6 +283,24 @@ int run_selfplay(int argc, char** argv) {
               << " mean_wait_ms=" << stats.mean_wait_ms()
               << " total_inference_ms=" << stats.total_inference_ms << "\n";
   }
+  const auto total_elapsed =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - run_started).count();
+  std::cout << "selfplay_summary"
+            << " games=" << games
+            << " game_workers=" << worker_count
+            << " search_threads=" << search_threads
+            << " value_mode=" << (value_mode == c4zero::play::ValueMode::Zero ? "zero" : "model")
+            << " samples=" << all_samples.size()
+            << " avg_plies=" << (games == 0 ? 0.0 : static_cast<double>(totals.total_plies) / games)
+            << " completed_simulations=" << totals.completed_simulations
+            << " leaf_evals=" << totals.leaf_evaluations
+            << " terminal_evals=" << totals.terminal_evaluations
+            << " max_depth=" << totals.max_depth
+            << " search_ms=" << totals.search_time_ms
+            << " elapsed_sec=" << total_elapsed
+            << " games_per_sec=" << (total_elapsed <= 0.0 ? 0.0 : static_cast<double>(games) / total_elapsed)
+            << " samples_per_sec=" << (total_elapsed <= 0.0 ? 0.0 : static_cast<double>(all_samples.size()) / total_elapsed)
+            << "\n";
 
   std::filesystem::create_directories(out_dir + "/shards");
   const std::string shard_path = out_dir + "/shards/shard-000000.c4az";
@@ -188,11 +315,13 @@ int run_selfplay(int argc, char** argv) {
   manifest_config.root_exploration_fraction = config.mcts.root_exploration_fraction;
   manifest_config.temperature_sampling_plies = config.temperature_sampling_plies;
   manifest_config.add_root_noise = config.add_root_noise;
+  manifest_config.game_workers = worker_count;
   manifest_config.search_threads = config.mcts.search_threads;
   manifest_config.virtual_loss = config.mcts.virtual_loss;
   manifest_config.inference_batch_size = model_path.empty() ? 1 : inference_batch_size;
   manifest_config.inference_max_wait_us = model_path.empty() ? 0 : inference_max_wait_us;
   manifest_config.evaluator_type = model_path.empty() ? "uniform" : "async_torchscript";
+  manifest_config.value_mode = value_mode == c4zero::play::ValueMode::Zero ? "zero" : "model";
   manifest_config.seed = config.seed;
   manifest_config.git_commit = git_commit();
   c4zero::data::write_manifest(

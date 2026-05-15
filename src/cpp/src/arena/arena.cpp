@@ -30,6 +30,10 @@ double ArenaResult::model_a_score_rate() const {
   return (static_cast<double>(model_a_wins) + 0.5 * static_cast<double>(draws)) / static_cast<double>(games);
 }
 
+bool ArenaResult::model_a_promoted() const {
+  return games > 0 && model_a_score_rate() >= promotion_threshold;
+}
+
 std::string ArenaResult::summary() const {
   std::ostringstream out;
   out << "games=" << games
@@ -38,7 +42,9 @@ std::string ArenaResult::summary() const {
       << " draws=" << draws
       << " model_a_score_rate=" << model_a_score_rate()
       << " avg_plies=" << (games == 0 ? 0.0 : static_cast<double>(total_plies) / games)
-      << " root_noise=" << (root_noise ? 1 : 0);
+      << " root_noise=" << (root_noise ? 1 : 0)
+      << " promotion_threshold=" << promotion_threshold
+      << " promote_model_a=" << (model_a_promoted() ? 1 : 0);
   return out.str();
 }
 
@@ -61,6 +67,9 @@ ArenaResult play_checkpoint_match(const ArenaConfig& config) {
   if (config.root_exploration_fraction < 0.0 || config.root_exploration_fraction > 1.0) {
     throw std::invalid_argument("arena root exploration fraction must be in [0, 1]");
   }
+  if (config.promotion_threshold < 0.0 || config.promotion_threshold > 1.0) {
+    throw std::invalid_argument("arena promotion threshold must be in [0, 1]");
+  }
 
   const torch::Device device = parse_device(config.device);
   model::TorchScriptEvaluator evaluator_a(config.model_a, device);
@@ -79,6 +88,7 @@ ArenaResult play_checkpoint_match(const ArenaConfig& config) {
   ArenaResult result;
   result.games = config.games;
   result.root_noise = config.add_root_noise;
+  result.promotion_threshold = config.promotion_threshold;
   for (int game = 0; game < config.games; ++game) {
     core::Position position = core::Position::empty();
     search::SearchTree tree_a(position);

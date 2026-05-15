@@ -139,6 +139,7 @@ int run_arena(int argc, char** argv) {
   config.add_root_noise = !has_arg(argc, argv, "--no-root-noise");
   config.root_dirichlet_alpha = std::stod(arg_value(argc, argv, "--root-dirichlet-alpha", "0.625"));
   config.root_exploration_fraction = std::stod(arg_value(argc, argv, "--root-exploration-fraction", "0.25"));
+  config.promotion_threshold = std::stod(arg_value(argc, argv, "--promotion-threshold", "0.55"));
   config.seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
   const auto result = c4zero::arena::play_checkpoint_match(config);
   std::cout << result.summary() << "\n";

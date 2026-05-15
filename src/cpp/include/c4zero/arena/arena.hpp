@@ -5,6 +5,8 @@
 
 namespace c4zero::arena {
 
+constexpr double kDefaultPromotionThreshold = 0.55;
+
 struct ArenaConfig {
   std::string model_a;
   std::string model_b;
@@ -15,6 +17,7 @@ struct ArenaConfig {
   bool add_root_noise = true;
   double root_dirichlet_alpha = 0.625;
   double root_exploration_fraction = 0.25;
+  double promotion_threshold = kDefaultPromotionThreshold;
   std::uint64_t seed = 1;
 };
 
@@ -25,8 +28,10 @@ struct ArenaResult {
   int draws = 0;
   int total_plies = 0;
   bool root_noise = false;
+  double promotion_threshold = kDefaultPromotionThreshold;
 
   [[nodiscard]] double model_a_score_rate() const;
+  [[nodiscard]] bool model_a_promoted() const;
   [[nodiscard]] std::string summary() const;
 };
 

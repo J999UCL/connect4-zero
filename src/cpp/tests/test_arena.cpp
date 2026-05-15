@@ -75,6 +75,33 @@ int main() {
   }
   C4ZERO_CHECK(threw);
 
+  c4zero::arena::ArenaConfig bad_promotion_threshold;
+  bad_promotion_threshold.model_a = "unused-a.ts";
+  bad_promotion_threshold.model_b = "unused-b.ts";
+  bad_promotion_threshold.promotion_threshold = 1.5;
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(bad_promotion_threshold);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
+  c4zero::arena::ArenaResult promoted;
+  promoted.games = 20;
+  promoted.model_a_wins = 11;
+  promoted.promotion_threshold = c4zero::arena::kDefaultPromotionThreshold;
+  C4ZERO_CHECK(promoted.model_a_promoted());
+  C4ZERO_CHECK(promoted.summary().find("promotion_threshold=0.55") != std::string::npos);
+  C4ZERO_CHECK(promoted.summary().find("promote_model_a=1") != std::string::npos);
+
+  c4zero::arena::ArenaResult not_promoted;
+  not_promoted.games = 20;
+  not_promoted.model_a_wins = 10;
+  not_promoted.promotion_threshold = c4zero::arena::kDefaultPromotionThreshold;
+  C4ZERO_CHECK(!not_promoted.model_a_promoted());
+  C4ZERO_CHECK(not_promoted.summary().find("promote_model_a=0") != std::string::npos);
+
   const char* fixture = std::getenv("C4ZERO_TORCHSCRIPT_FIXTURE");
   if (fixture == nullptr || std::string(fixture).empty()) {
     std::cout << "C4ZERO_TORCHSCRIPT_FIXTURE unset; skipping optional arena checkpoint fixture test\n";

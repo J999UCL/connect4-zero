@@ -37,7 +37,8 @@ std::string ArenaResult::summary() const {
       << " model_b_wins=" << model_b_wins
       << " draws=" << draws
       << " model_a_score_rate=" << model_a_score_rate()
-      << " avg_plies=" << (games == 0 ? 0.0 : static_cast<double>(total_plies) / games);
+      << " avg_plies=" << (games == 0 ? 0.0 : static_cast<double>(total_plies) / games)
+      << " root_noise=" << (root_noise ? 1 : 0);
   return out.str();
 }
 
@@ -54,6 +55,12 @@ ArenaResult play_checkpoint_match(const ArenaConfig& config) {
   if (config.search_threads <= 0) {
     throw std::invalid_argument("arena search threads must be positive");
   }
+  if (config.root_dirichlet_alpha <= 0.0) {
+    throw std::invalid_argument("arena root Dirichlet alpha must be positive");
+  }
+  if (config.root_exploration_fraction < 0.0 || config.root_exploration_fraction > 1.0) {
+    throw std::invalid_argument("arena root exploration fraction must be in [0, 1]");
+  }
 
   const torch::Device device = parse_device(config.device);
   model::TorchScriptEvaluator evaluator_a(config.model_a, device);
@@ -62,6 +69,8 @@ ArenaResult play_checkpoint_match(const ArenaConfig& config) {
   search::PuctConfig mcts_config;
   mcts_config.simulations_per_move = config.simulations;
   mcts_config.search_threads = config.search_threads;
+  mcts_config.root_dirichlet_alpha = config.root_dirichlet_alpha;
+  mcts_config.root_exploration_fraction = config.root_exploration_fraction;
   mcts_config.seed = config.seed;
   search::PuctMcts mcts_a(mcts_config);
   mcts_config.seed = config.seed ^ 0x9E3779B97F4A7C15ULL;
@@ -69,6 +78,7 @@ ArenaResult play_checkpoint_match(const ArenaConfig& config) {
 
   ArenaResult result;
   result.games = config.games;
+  result.root_noise = config.add_root_noise;
   for (int game = 0; game < config.games; ++game) {
     core::Position position = core::Position::empty();
     search::SearchTree tree_a(position);
@@ -84,7 +94,7 @@ ArenaResult play_checkpoint_match(const ArenaConfig& config) {
           : static_cast<search::Evaluator&>(evaluator_b);
       search::SearchTree& active_tree = a_to_move ? tree_a : tree_b;
 
-      search::SearchResult search = mcts.search(active_tree, evaluator, false, 0.0);
+      search::SearchResult search = mcts.search(active_tree, evaluator, config.add_root_noise, 0.0);
       if (search.selected_action < 0 || !position.is_legal(search.selected_action)) {
         throw std::runtime_error("arena checkpoint selected illegal action");
       }

@@ -136,6 +136,9 @@ int run_arena(int argc, char** argv) {
   config.games = to_int(arg_value(argc, argv, "--games", "2"));
   config.simulations = to_int(arg_value(argc, argv, "--simulations", "800"));
   config.search_threads = to_int(arg_value(argc, argv, "--search-threads", "1"));
+  config.add_root_noise = !has_arg(argc, argv, "--no-root-noise");
+  config.root_dirichlet_alpha = std::stod(arg_value(argc, argv, "--root-dirichlet-alpha", "0.625"));
+  config.root_exploration_fraction = std::stod(arg_value(argc, argv, "--root-exploration-fraction", "0.25"));
   config.seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
   const auto result = c4zero::arena::play_checkpoint_match(config);
   std::cout << result.summary() << "\n";

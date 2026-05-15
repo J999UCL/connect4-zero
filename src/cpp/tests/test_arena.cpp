@@ -51,6 +51,30 @@ int main() {
   }
   C4ZERO_CHECK(threw);
 
+  c4zero::arena::ArenaConfig bad_noise_alpha;
+  bad_noise_alpha.model_a = "unused-a.ts";
+  bad_noise_alpha.model_b = "unused-b.ts";
+  bad_noise_alpha.root_dirichlet_alpha = 0.0;
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(bad_noise_alpha);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
+  c4zero::arena::ArenaConfig bad_noise_fraction;
+  bad_noise_fraction.model_a = "unused-a.ts";
+  bad_noise_fraction.model_b = "unused-b.ts";
+  bad_noise_fraction.root_exploration_fraction = 1.5;
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(bad_noise_fraction);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
   const char* fixture = std::getenv("C4ZERO_TORCHSCRIPT_FIXTURE");
   if (fixture == nullptr || std::string(fixture).empty()) {
     std::cout << "C4ZERO_TORCHSCRIPT_FIXTURE unset; skipping optional arena checkpoint fixture test\n";
@@ -66,5 +90,6 @@ int main() {
   C4ZERO_CHECK_EQ(result.games, 2);
   C4ZERO_CHECK_EQ(result.model_a_wins + result.model_b_wins + result.draws, 2);
   C4ZERO_CHECK(result.total_plies > 0);
+  C4ZERO_CHECK(result.root_noise);
   return 0;
 }

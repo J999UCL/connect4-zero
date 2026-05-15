@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>c4zero play</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main id="app">
+      <section id="scene"></section>
+      <aside id="panel">
+        <div class="title">
+          <span>4x4x4 Connect Four</span>
+          <button id="reset" type="button">Reset</button>
+        </div>
+        <div id="status">Loading...</div>
+        <div class="metric-grid">
+          <div>
+            <label>Ply</label>
+            <strong id="ply">0</strong>
+          </div>
+          <div>
+            <label>Root value</label>
+            <strong id="root-value">-</strong>
+          </div>
+          <div>
+            <label>Search</label>
+            <strong id="search-ms">-</strong>
+          </div>
+          <div>
+            <label>Depth</label>
+            <strong id="depth">-</strong>
+          </div>
+        </div>
+        <div>
+          <div class="section-label">Policy</div>
+          <div id="policy-grid"></div>
+        </div>
+        <div>
+          <div class="section-label">Moves</div>
+          <div id="move-list"></div>
+        </div>
+      </aside>
+    </main>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

@@ -7,6 +7,7 @@
 #include "c4zero/search/puct.hpp"
 #include "c4zero/selfplay/selfplay.hpp"
 #include "c4zero/version/info.hpp"
+#include "c4zero/web/server.hpp"
 
 #include <algorithm>
 #include <array>
@@ -77,6 +78,7 @@ void usage() {
       << "  botmatch --bot-a center --bot-b tactical --games 20\n"
       << "  arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 20 --simulations 800\n"
       << "  play --model checkpoints/current/inference.ts --simulations 800 --search-threads 4\n"
+      << "  serve --model artifacts/.../inference.ts --simulations 800 --port 8080\n"
       << "  curriculum --stage 0 --samples 1000000 --shard-size 100000 --out /tmp/thakwani/rl-data/curriculum/stage0-v1\n"
       << "  selfplay --model checkpoints/current/inference.ts --games 2 --simulations 32 --game-workers 4 --search-threads 2 --out runs/smoke\n";
 }
@@ -353,6 +355,24 @@ int run_play(int argc, char** argv) {
   return c4zero::play::run_terminal_game(std::cin, std::cout, config);
 }
 
+int run_serve(int argc, char** argv) {
+  c4zero::web::WebPlayConfig config;
+  config.model_path = arg_value(argc, argv, "--model", "");
+  config.device = arg_value(argc, argv, "--device", "cpu");
+  config.host = arg_value(argc, argv, "--host", "127.0.0.1");
+  config.port = to_int(arg_value(argc, argv, "--port", "8080"));
+  config.web_root = arg_value(argc, argv, "--web-root", "src/web/play");
+  config.simulations = to_int(arg_value(argc, argv, "--simulations", "800"));
+  config.search_threads = to_int(arg_value(argc, argv, "--search-threads", "4"));
+  config.virtual_loss = to_float(arg_value(argc, argv, "--virtual-loss", "1.0"));
+  config.inference_batch_size = to_int(arg_value(argc, argv, "--inference-batch-size", "128"));
+  config.inference_max_wait_us = to_int(arg_value(argc, argv, "--inference-max-wait-us", "2000"));
+  config.seed = static_cast<std::uint64_t>(std::stoull(arg_value(argc, argv, "--seed", "1")));
+  config.bot_first = has_arg(argc, argv, "--bot-first");
+  config.value_mode = c4zero::web::parse_web_value_mode(arg_value(argc, argv, "--value-mode", "model"));
+  return c4zero::web::run_web_server(config);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -390,6 +410,9 @@ int main(int argc, char** argv) {
     }
     if (command == "play") {
       return run_play(argc, argv);
+    }
+    if (command == "serve") {
+      return run_serve(argc, argv);
     }
     usage();
     return 1;

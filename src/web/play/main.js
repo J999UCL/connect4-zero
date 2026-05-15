@@ -64,6 +64,13 @@ const botMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.42,
   metalness: 0.08,
 });
+const postMaterial = new THREE.MeshStandardMaterial({
+  color: 0xb7fff2,
+  roughness: 0.48,
+  metalness: 0.18,
+  transparent: true,
+  opacity: 0.42,
+});
 const ghostMaterial = new THREE.MeshBasicMaterial({
   color: 0xe5f4f2,
   transparent: true,
@@ -89,6 +96,8 @@ function buildBoard() {
   const heatGeometry = new THREE.BoxGeometry(0.98, 0.025, 0.98);
   const targetGeometry = new THREE.BoxGeometry(1.06, 0.08, 1.06);
   const slotGeometry = new THREE.TorusGeometry(pieceRadius * 1.08, 0.012, 8, 36);
+  const postGeometry = new THREE.CylinderGeometry(0.028, 0.028, spacing * 3 + pieceRadius * 2.35, 16);
+  const postCenterY = (spacing * 3 + pieceRadius * 2.35) / 2 - 0.02;
 
   for (let action = 0; action < 16; action += 1) {
     const { x, y } = actionToXY(action);
@@ -114,6 +123,10 @@ function buildBoard() {
     target.userData.action = action;
     boardGroup.add(target);
     clickTargets.push(target);
+
+    const post = new THREE.Mesh(postGeometry, postMaterial);
+    post.position.set(base.x, postCenterY, base.z);
+    boardGroup.add(post);
 
     for (let z = 0; z < 4; z += 1) {
       const slot = new THREE.Mesh(slotGeometry, ghostMaterial);
@@ -144,12 +157,13 @@ function buildBoard() {
 
 function updatePieces(nextState) {
   pieceGroup.clear();
-  const geometry = new THREE.SphereGeometry(pieceRadius, 32, 18);
+  const geometry = new THREE.TorusGeometry(pieceRadius * 0.72, pieceRadius * 0.22, 18, 48);
   for (const cell of nextState.cells) {
-    const sphere = new THREE.Mesh(geometry, cell.owner === "human" ? humanMaterial : botMaterial);
+    const piece = new THREE.Mesh(geometry, cell.owner === "human" ? humanMaterial : botMaterial);
     const pos = cellPosition(cell.x, cell.y, cell.z);
-    sphere.position.copy(pos);
-    pieceGroup.add(sphere);
+    piece.position.copy(pos);
+    piece.rotation.x = Math.PI / 2;
+    pieceGroup.add(piece);
   }
 }
 

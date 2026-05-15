@@ -4,6 +4,8 @@ import argparse
 from dataclasses import asdict
 import json
 from pathlib import Path
+import random
+import time
 
 import torch
 
@@ -11,7 +13,7 @@ from c4zero_train.checkpoint import load_checkpoint, restore_optimizer_and_sched
 from c4zero_train.export import export_checkpoint, export_torchscript_model
 from c4zero_train.model import create_model, count_parameters
 from c4zero_train.replay import ReplayBuffer, ReplayConfig
-from c4zero_train.trainer import TrainConfig, make_optimizer, make_scheduler, train_steps
+from c4zero_train.trainer import TrainConfig, make_optimizer, make_scheduler, train_step
 
 
 def inspect_model_main(argv: list[str] | None = None) -> int:
@@ -52,6 +54,8 @@ def train_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replay-games", default=None, help="Replay window game count, or 'all' for curriculum data.")
     parser.add_argument("--policy-weight", type=float, default=1.0)
     parser.add_argument("--value-weight", type=float, default=1.0)
+    parser.add_argument("--reset-optimizer", action="store_true", help="Resume model weights but start a fresh optimizer/scheduler.")
+    parser.add_argument("--log-every-steps", type=int, default=0)
     args = parser.parse_args(argv)
 
     payload = None
@@ -79,11 +83,46 @@ def train_main(argv: list[str] | None = None) -> int:
     scheduler = make_scheduler(optimizer)
     start_step = 0
     start_epoch = 0
-    if payload is not None:
+    if payload is not None and not args.reset_optimizer:
         restore_optimizer_and_scheduler(payload, optimizer, scheduler)
         start_step = int(payload["step"])
         start_epoch = int(payload["epoch"])
-    losses = train_steps(model, replay, optimizer, scheduler, train_config, args.steps, device=args.device)
+    losses = []
+    rng = random.Random(train_config.seed)
+    started_at = time.perf_counter()
+    for local_step in range(1, args.steps + 1):
+        samples = replay.sample_batch(train_config.batch_size, rng)
+        loss = train_step(
+            model,
+            optimizer,
+            samples,
+            device=args.device,
+            policy_weight=train_config.policy_weight,
+            value_weight=train_config.value_weight,
+        )
+        losses.append(loss)
+        if scheduler is not None:
+            scheduler.step()
+        if args.log_every_steps > 0 and (local_step == 1 or local_step % args.log_every_steps == 0 or local_step == args.steps):
+            elapsed = max(time.perf_counter() - started_at, 1e-9)
+            print(
+                json.dumps(
+                    {
+                        "kind": "train_progress",
+                        "local_step": local_step,
+                        "step": start_step + local_step,
+                        "steps": args.steps,
+                        "loss": loss.total,
+                        "policy_loss": loss.policy,
+                        "value_loss": loss.value,
+                        "paper_total_loss": loss.paper_total_loss,
+                        "lr": float(optimizer.param_groups[0]["lr"]),
+                        "samples_per_sec": (local_step * train_config.batch_size) / elapsed,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
     final_step = start_step + args.steps
     metrics = {
         "last_loss": losses[-1].total,

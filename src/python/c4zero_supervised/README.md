@@ -19,7 +19,8 @@ python -m c4zero_supervised.stage0_train \
   --val-manifest /tmp/thakwani/rl-data/curriculum/stage0-v1-val/manifest.json \
   --batch-size 2048 \
   --epochs 3 \
-  --eval-every-steps 100 \
+  --log-every-steps 10 \
+  --eval-every-steps 50 \
   --device cuda \
   --out /tmp/thakwani/rl-runs/stage0-small
 ```

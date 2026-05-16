@@ -13,6 +13,7 @@ import numpy as np
 import torch
 from torch import nn
 
+from c4zero_oracles import portable
 from c4zero_train.checkpoint import load_checkpoint
 
 INVALID_MOVE_VALUE = np.iinfo(np.int32).min
@@ -44,6 +45,7 @@ class HeadToHeadResult:
     losses: int
     draws: int
     winrate: float
+    avg_plies: float = 0.0
 
 
 def load_eval_set(path: str | Path) -> list[dict[str, Any]]:
@@ -74,6 +76,10 @@ def _planes_from_bits(current_bits: int, opponent_bits: int) -> np.ndarray:
         if opponent_bits & bit:
             planes[1, z, y, x] = 1.0
     return planes
+
+
+def _planes_from_portable_position(position: portable.Position) -> np.ndarray:
+    return _planes_from_bits(position.current, position.opponent)
 
 
 def _signed_obs_to_planes(obs: torch.Tensor) -> torch.Tensor:
@@ -360,6 +366,69 @@ def evaluate_against_score4_ladder(
     return output
 
 
+def _model_action_from_portable_position(
+    model: nn.Module,
+    position: portable.Position,
+    *,
+    device: str | torch.device,
+) -> int:
+    legal = np.asarray([(position.legal_mask() & (1 << action)) != 0 for action in range(ACTION_SIZE)], dtype=bool)
+    with torch.no_grad():
+        x = torch.as_tensor(_planes_from_portable_position(position)[None, ...], dtype=torch.float32, device=device)
+        logits, _value = model(x)
+        logits = torch.nan_to_num(logits, nan=0.0, posinf=1e30, neginf=-1e30)
+        logits = logits.masked_fill(~torch.as_tensor(legal[None, :], dtype=torch.bool, device=logits.device), -1e30)
+        action = int(logits.argmax(dim=-1).item())
+    if action < 0 or action >= ACTION_SIZE or not bool(legal[action]):
+        legal_actions = np.flatnonzero(legal)
+        return int(legal_actions[0]) if legal_actions.size else 0
+    return action
+
+
+def evaluate_against_portable_oracle(
+    model: nn.Module,
+    *,
+    depth: int,
+    games: int,
+    seed: int,
+    device: str | torch.device = "cpu",
+) -> HeadToHeadResult:
+    del seed  # Deterministic alternating starts; kept for CLI/config symmetry.
+    model = model.to(device).eval()
+    wins = losses = draws = total_plies = 0
+    for game in range(games):
+        position = portable.Position()
+        agent_side = game % 2
+        while position.terminal_value() is None:
+            absolute_side_to_move = position.ply % 2
+            if absolute_side_to_move == agent_side:
+                action = _model_action_from_portable_position(model, position, device=device)
+            else:
+                _value, action, _move_values = portable.solve(position, depth)
+            position = position.play(action)
+        total_plies += position.ply
+        terminal = position.terminal_value()
+        if terminal == 0.0:
+            draws += 1
+            continue
+        initial_player_won = position.ply % 2 == 1
+        agent_won = initial_player_won == (agent_side == 0)
+        if agent_won:
+            wins += 1
+        else:
+            losses += 1
+    total = max(wins + losses + draws, 1)
+    return HeadToHeadResult(
+        opponent=f"portable_oracle_d{depth}",
+        games=total,
+        wins=wins,
+        losses=losses,
+        draws=draws,
+        winrate=float(wins / total),
+        avg_plies=float(total_plies / total),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Evaluate c4zero checkpoints using Gerard's Score Four oracle assets.")
     model_group = parser.add_mutually_exclusive_group(required=True)
@@ -372,6 +441,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--eps", type=int, default=1)
     parser.add_argument("--keep-incomplete", action="store_true", help="Keep rows where some legal moves have no oracle value.")
     parser.add_argument("--head-to-head", action="store_true")
+    parser.add_argument("--portable-head-to-head", action="store_true")
+    parser.add_argument("--portable-depth", type=int, default=4)
     parser.add_argument("--opponent", action="append", default=[])
     parser.add_argument("--games", type=int, default=16)
     parser.add_argument("--n-envs", type=int, default=16)
@@ -403,6 +474,16 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
         )
         result["head_to_head"] = [asdict(item) for item in ladder]
+    if args.portable_head_to_head:
+        result["portable_head_to_head"] = asdict(
+            evaluate_against_portable_oracle(
+                model,
+                depth=args.portable_depth,
+                games=args.games,
+                seed=args.seed,
+                device=args.device,
+            )
+        )
     if not result:
         raise ValueError("nothing to evaluate: pass --eval-set and/or --head-to-head")
 

@@ -10,6 +10,8 @@ constexpr double kDefaultPromotionThreshold = 0.55;
 struct ArenaConfig {
   std::string model_a;
   std::string model_b;
+  std::string bot_a;
+  std::string bot_b;
   std::string device = "cpu";
   int games = 2;
   int simulations = 800;
@@ -29,6 +31,8 @@ struct ArenaResult {
   int total_plies = 0;
   bool root_noise = false;
   double promotion_threshold = kDefaultPromotionThreshold;
+  std::string player_a;
+  std::string player_b;
 
   [[nodiscard]] double model_a_score_rate() const;
   [[nodiscard]] bool model_a_promoted() const;

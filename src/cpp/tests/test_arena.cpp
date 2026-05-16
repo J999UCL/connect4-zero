@@ -87,6 +87,19 @@ int main() {
   }
   C4ZERO_CHECK(threw);
 
+  c4zero::arena::ArenaConfig ambiguous_side;
+  ambiguous_side.model_a = "unused-a.ts";
+  ambiguous_side.bot_a = "minimax3";
+  ambiguous_side.model_b = "unused-b.ts";
+  ambiguous_side.games = 0;
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(ambiguous_side);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
   c4zero::arena::ArenaResult promoted;
   promoted.games = 20;
   promoted.model_a_wins = 11;
@@ -101,6 +114,18 @@ int main() {
   not_promoted.promotion_threshold = c4zero::arena::kDefaultPromotionThreshold;
   C4ZERO_CHECK(!not_promoted.model_a_promoted());
   C4ZERO_CHECK(not_promoted.summary().find("promote_model_a=0") != std::string::npos);
+
+  c4zero::arena::ArenaConfig bot_config;
+  bot_config.bot_a = "minimax3";
+  bot_config.bot_b = "one-ply-tactical";
+  bot_config.games = 2;
+  bot_config.simulations = 1;
+  const auto bot_result = c4zero::arena::play_checkpoint_match(bot_config);
+  C4ZERO_CHECK_EQ(bot_result.games, 2);
+  C4ZERO_CHECK_EQ(bot_result.model_a_wins + bot_result.model_b_wins + bot_result.draws, 2);
+  C4ZERO_CHECK(bot_result.total_plies > 0);
+  C4ZERO_CHECK(bot_result.summary().find("player_a=bot:minimax3") != std::string::npos);
+  C4ZERO_CHECK(bot_result.summary().find("player_b=bot:one-ply-tactical") != std::string::npos);
 
   const char* fixture = std::getenv("C4ZERO_TORCHSCRIPT_FIXTURE");
   if (fixture == nullptr || std::string(fixture).empty()) {

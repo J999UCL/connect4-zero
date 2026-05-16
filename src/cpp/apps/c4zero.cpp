@@ -77,6 +77,7 @@ void usage() {
       << "  bots\n"
       << "  botmatch --bot-a center --bot-b tactical --games 20\n"
       << "  arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 20 --simulations 800\n"
+      << "  arena --model-a checkpoints/a/inference.ts --bot-b minimax5 --games 64 --simulations 800\n"
       << "  play --model checkpoints/current/inference.ts --simulations 800 --search-threads 4\n"
       << "  serve --model artifacts/.../inference.ts --simulations 800 --port 8080\n"
       << "  curriculum --stage 0 --samples 1000000 --shard-size 100000 --out /tmp/thakwani/rl-data/curriculum/stage0-v1\n"
@@ -134,6 +135,8 @@ int run_arena(int argc, char** argv) {
   c4zero::arena::ArenaConfig config;
   config.model_a = arg_value(argc, argv, "--model-a", "");
   config.model_b = arg_value(argc, argv, "--model-b", "");
+  config.bot_a = arg_value(argc, argv, "--bot-a", "");
+  config.bot_b = arg_value(argc, argv, "--bot-b", "");
   config.device = arg_value(argc, argv, "--device", "cpu");
   config.games = to_int(arg_value(argc, argv, "--games", "2"));
   config.simulations = to_int(arg_value(argc, argv, "--simulations", "800"));

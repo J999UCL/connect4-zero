@@ -318,15 +318,18 @@ std::string DepthLimitedMinimaxBot::name() const {
   return "minimax-depth-" + std::to_string(depth_);
 }
 
-OracleBot::OracleBot(int depth, int tt_size_mb) : depth_(depth), tt_size_mb_(tt_size_mb) {
+OracleBot::OracleBot(int depth, int tt_size_mb, int time_ms) : depth_(depth), tt_size_mb_(tt_size_mb), time_ms_(time_ms) {
   if (depth_ <= 0) {
     throw std::invalid_argument("oracle bot depth must be positive");
+  }
+  if (time_ms_ < 0) {
+    throw std::invalid_argument("oracle bot time budget must be non-negative");
   }
 }
 
 core::Action OracleBot::select_move(const core::Position& position) const {
   oracle::Solver solver(tt_size_mb_);
-  const auto result = solver.solve_with_move_values(position, depth_);
+  const auto result = solver.solve(position, depth_, time_ms_);
   if (result.best_action < 0 || !position.is_legal(result.best_action)) {
     throw std::runtime_error("OracleBot called on terminal position");
   }

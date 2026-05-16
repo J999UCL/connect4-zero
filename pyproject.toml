@@ -20,6 +20,7 @@ c4zero-export = "c4zero_train.cli:export_main"
 c4zero-inspect-model = "c4zero_train.cli:inspect_model_main"
 c4zero-loop = "c4zero_train.az_loop:loop_main"
 c4zero-symmetry-repair = "c4zero_train.symmetry_repair:repair_main"
+c4zero-oracle-eval = "c4zero_oracles.gerard:main"
 c4zero-stage0-train = "c4zero_supervised.stage0_train:train_main"
 c4zero-stage0-eval = "c4zero_supervised.stage0_eval:eval_main"
 

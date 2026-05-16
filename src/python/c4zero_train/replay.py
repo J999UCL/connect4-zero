@@ -34,7 +34,7 @@ class ReplayConfig:
 @dataclass(frozen=True, slots=True)
 class ReplaySamplingConfig:
     mode: str = "uniform"
-    recent_games: int = 10_000
+    recent_games: int = 4_000
     recent_fraction: float = 0.75
 
     def __post_init__(self) -> None:

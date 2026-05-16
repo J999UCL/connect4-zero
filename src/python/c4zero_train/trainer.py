@@ -18,7 +18,7 @@ SymmetryMode = Literal["none", "random", "orbit"]
 @dataclass(frozen=True, slots=True)
 class TrainConfig:
     batch_size: int
-    learning_rate: float = 0.2
+    learning_rate: float = 0.01
     momentum: float = 0.9
     weight_decay: float = 1e-4
     seed: int = 1
@@ -27,7 +27,7 @@ class TrainConfig:
     augment_symmetries: bool = False
     symmetry_mode: SymmetryMode = "none"
     replay_sampling: str = "uniform"
-    recent_games: int = 10_000
+    recent_games: int = 4_000
     recent_fraction: float = 0.75
 
     def replay_sampling_config(self) -> ReplaySamplingConfig:

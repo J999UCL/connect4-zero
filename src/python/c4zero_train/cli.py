@@ -62,11 +62,14 @@ def train_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replay-games", default=None, help="Replay window game count, or 'all' for curriculum data.")
     parser.add_argument("--policy-weight", type=float, default=1.0)
     parser.add_argument("--value-weight", type=float, default=1.0)
+    parser.add_argument("--learning-rate", type=float, default=0.01)
+    parser.add_argument("--momentum", type=float, default=0.9)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--augment-symmetries", action="store_true", help="Apply random 4x4 base-plane symmetries during replay sampling.")
     parser.add_argument("--symmetry-mode", choices=["none", "random", "orbit"])
     parser.add_argument("--batch-size", type=int, help="Training batch size; in orbit mode this is the base batch before 8-way expansion.")
     parser.add_argument("--replay-sampling", choices=["uniform", "recent-mix"], default="uniform")
-    parser.add_argument("--recent-games", type=int, default=10_000)
+    parser.add_argument("--recent-games", type=int, default=4_000)
     parser.add_argument("--recent-fraction", type=float, default=0.75)
     parser.add_argument("--reset-optimizer", action="store_true", help="Resume model weights but start a fresh optimizer/scheduler.")
     parser.add_argument("--log-every-steps", type=int, default=0)
@@ -91,6 +94,9 @@ def train_main(argv: list[str] | None = None) -> int:
     configured_batch_size = args.batch_size if args.batch_size is not None else replay_config.batch_size
     train_config = TrainConfig(
         batch_size=min(configured_batch_size, len(replay.samples)),
+        learning_rate=args.learning_rate,
+        momentum=args.momentum,
+        weight_decay=args.weight_decay,
         seed=args.seed,
         policy_weight=args.policy_weight,
         value_weight=args.value_weight,
@@ -162,6 +168,9 @@ def train_main(argv: list[str] | None = None) -> int:
         "last_l2_regularization": losses[-1].l2_regularization,
         "policy_weight": args.policy_weight,
         "value_weight": args.value_weight,
+        "learning_rate": train_config.learning_rate,
+        "momentum": train_config.momentum,
+        "weight_decay": train_config.weight_decay,
         "symmetry_augmentation": symmetry_mode != "none",
         "symmetry_mode": symmetry_mode,
         "base_batch_size": train_config.batch_size,

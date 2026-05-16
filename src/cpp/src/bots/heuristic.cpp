@@ -356,6 +356,13 @@ int parse_depth_suffix(const std::string& name, const std::string& prefix) {
   return std::stoi(suffix);
 }
 
+int default_oracle_time_ms(int depth) {
+  if (depth >= 16) {
+    return 120000;
+  }
+  return 200;
+}
+
 std::unique_ptr<Bot> make_bot(const std::string& name) {
   if (name == "first" || name == "first-legal") return std::make_unique<FirstLegalBot>();
   if (name == "center" || name == "center-order") return std::make_unique<CenterOrderBot>();
@@ -365,10 +372,10 @@ std::unique_ptr<Bot> make_bot(const std::string& name) {
   if (name == "minimax3") return std::make_unique<DepthLimitedMinimaxBot>(3);
   if (name == "minimax5") return std::make_unique<DepthLimitedMinimaxBot>(5);
   if (const int depth = parse_depth_suffix(name, "oracle-d"); depth > 0) {
-    return std::make_unique<OracleBot>(depth);
+    return std::make_unique<OracleBot>(depth, 64, default_oracle_time_ms(depth));
   }
   if (const int depth = parse_depth_suffix(name, "oracle_d"); depth > 0) {
-    return std::make_unique<OracleBot>(depth);
+    return std::make_unique<OracleBot>(depth, 64, default_oracle_time_ms(depth));
   }
   throw std::invalid_argument("unknown bot: " + name);
 }

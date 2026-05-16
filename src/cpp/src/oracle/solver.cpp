@@ -179,7 +179,7 @@ int evaluate_heuristic(const core::Position& position) {
 
 int Solver::negamax(const core::Position& position, int depth, int alpha, int beta, int ply_distance) {
   ++nodes_;
-  if ((nodes_ & 0xfffULL) == 0 && time_up()) {
+  if (time_budget_.count() > 0 && (nodes_ & 0x3ffULL) == 0 && time_up()) {
     stopped_ = true;
   }
   if (stopped_) {
@@ -239,8 +239,15 @@ int Solver::negamax(const core::Position& position, int depth, int alpha, int be
   core::Action best_move = count > 0 ? order[0] : -1;
 
   for (int index = 0; index < count; ++index) {
+    if (time_budget_.count() > 0 && time_up()) {
+      stopped_ = true;
+      break;
+    }
     const core::Action action = order[static_cast<std::size_t>(index)];
     const int value = -negamax(position.play(action), depth - 1, -beta, -alpha, ply_distance + 1);
+    if (stopped_) {
+      break;
+    }
     if (value > best) {
       best = value;
       best_move = action;
@@ -276,6 +283,9 @@ SolveResult Solver::solve(const core::Position& position, int max_depth, int tim
   time_budget_ = time_ms > 0 ? std::chrono::milliseconds(time_ms) : std::chrono::nanoseconds(0);
 
   for (int depth = 1; depth <= max_depth; ++depth) {
+    if (time_budget_.count() > 0 && time_up()) {
+      break;
+    }
     const int value = negamax(position, depth, -kInfinity, kInfinity, 0);
     if (stopped_) {
       break;

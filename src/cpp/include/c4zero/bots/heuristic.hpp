@@ -1,6 +1,7 @@
 #pragma once
 
 #include "c4zero/core/position.hpp"
+#include "c4zero/oracle/solver.hpp"
 
 #include <array>
 #include <memory>
@@ -84,8 +85,8 @@ class OracleBot final : public Bot {
 
  private:
   int depth_;
-  int tt_size_mb_;
   int time_ms_;
+  mutable oracle::Solver solver_;
 };
 
 [[nodiscard]] std::unique_ptr<Bot> make_bot(const std::string& name);

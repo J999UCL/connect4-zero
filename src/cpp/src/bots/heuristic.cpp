@@ -1,9 +1,9 @@
 #include "c4zero/bots/heuristic.hpp"
 
-#include "c4zero/oracle/solver.hpp"
-
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -318,7 +318,8 @@ std::string DepthLimitedMinimaxBot::name() const {
   return "minimax-depth-" + std::to_string(depth_);
 }
 
-OracleBot::OracleBot(int depth, int tt_size_mb, int time_ms) : depth_(depth), tt_size_mb_(tt_size_mb), time_ms_(time_ms) {
+OracleBot::OracleBot(int depth, int tt_size_mb, int time_ms)
+    : depth_(depth), time_ms_(time_ms), solver_(tt_size_mb) {
   if (depth_ <= 0) {
     throw std::invalid_argument("oracle bot depth must be positive");
   }
@@ -328,11 +329,24 @@ OracleBot::OracleBot(int depth, int tt_size_mb, int time_ms) : depth_(depth), tt
 }
 
 core::Action OracleBot::select_move(const core::Position& position) const {
-  oracle::Solver solver(tt_size_mb_);
-  const auto result = solver.solve(position, depth_, time_ms_);
+  const auto started_at = std::chrono::steady_clock::now();
+  const auto result = solver_.solve(position, depth_, time_ms_);
+  const auto elapsed_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at).count();
   if (result.best_action < 0 || !position.is_legal(result.best_action)) {
     throw std::runtime_error("OracleBot called on terminal position");
   }
+  std::cerr << "oracle_move"
+            << " name=" << name()
+            << " ply=" << static_cast<int>(position.ply)
+            << " action=" << result.best_action
+            << " value=" << result.value
+            << " depth=" << result.depth
+            << " nodes=" << result.nodes
+            << " stopped=" << (result.stopped ? 1 : 0)
+            << " time_budget_ms=" << time_ms_
+            << " elapsed_ms=" << elapsed_ms
+            << "\n";
   return result.best_action;
 }
 
@@ -358,7 +372,7 @@ int parse_depth_suffix(const std::string& name, const std::string& prefix) {
 
 int default_oracle_time_ms(int depth) {
   if (depth >= 16) {
-    return 120000;
+    return 60000;
   }
   return 200;
 }

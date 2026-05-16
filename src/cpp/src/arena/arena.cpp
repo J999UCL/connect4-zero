@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <random>
@@ -76,6 +77,7 @@ struct ArenaSide {
 struct ArenaGameSpec {
   core::Position opening;
   bool a_controls_initial = true;
+  int game_index = 0;
 };
 
 search::PuctConfig make_mcts_config(const ArenaConfig& config, std::uint64_t seed) {
@@ -175,6 +177,7 @@ std::vector<ArenaGameSpec> make_game_specs(const ArenaConfig& config) {
       ArenaGameSpec spec;
       spec.opening = repeat < 2 ? base : core::transform(base, symmetry);
       spec.a_controls_initial = (repeat % 2 == 0);
+      spec.game_index = static_cast<int>(specs.size());
       specs.push_back(spec);
     }
   }
@@ -199,6 +202,12 @@ ArenaResult play_one_game(
   core::Position position = spec.opening;
   reset_tree(side_a, position);
   reset_tree(side_b, position);
+  std::cerr << "arena_game_start"
+            << " worker=" << worker_id
+            << " game=" << spec.game_index
+            << " opening_ply=" << static_cast<int>(position.ply)
+            << " a_controls_initial=" << (spec.a_controls_initial ? 1 : 0)
+            << "\n";
 
   while (!position.is_terminal()) {
     const bool initial_player_to_move = (position.ply % 2 == 0);
@@ -216,6 +225,12 @@ ArenaResult play_one_game(
   const float terminal = *position.terminal_value();
   if (terminal == 0.0f) {
     result.draws = 1;
+    std::cerr << "arena_game_done"
+              << " worker=" << worker_id
+              << " game=" << spec.game_index
+              << " result=draw"
+              << " plies=" << result.total_plies
+              << "\n";
     return result;
   }
   const bool initial_player_won = (position.ply % 2 == 1);
@@ -225,6 +240,12 @@ ArenaResult play_one_game(
   } else {
     result.model_b_wins = 1;
   }
+  std::cerr << "arena_game_done"
+            << " worker=" << worker_id
+            << " game=" << spec.game_index
+            << " result=" << (model_a_won ? "model_a" : "model_b")
+            << " plies=" << result.total_plies
+            << "\n";
   return result;
 }
 

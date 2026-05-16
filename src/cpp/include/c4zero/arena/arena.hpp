@@ -16,7 +16,11 @@ struct ArenaConfig {
   int games = 2;
   int simulations = 800;
   int search_threads = 1;
-  bool add_root_noise = true;
+  int arena_workers = 4;
+  int opening_count = 0;
+  int opening_plies = 4;
+  int games_per_opening = 4;
+  bool add_root_noise = false;
   double root_dirichlet_alpha = 0.625;
   double root_exploration_fraction = 0.25;
   double promotion_threshold = kDefaultPromotionThreshold;
@@ -30,6 +34,10 @@ struct ArenaResult {
   int draws = 0;
   int total_plies = 0;
   bool root_noise = false;
+  int arena_workers = 1;
+  int opening_count = 0;
+  int opening_plies = 0;
+  int games_per_opening = 1;
   double promotion_threshold = kDefaultPromotionThreshold;
   std::string player_a;
   std::string player_b;

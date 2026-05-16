@@ -87,6 +87,30 @@ int main() {
   }
   C4ZERO_CHECK(threw);
 
+  c4zero::arena::ArenaConfig bad_workers;
+  bad_workers.model_a = "unused-a.ts";
+  bad_workers.model_b = "unused-b.ts";
+  bad_workers.arena_workers = 0;
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(bad_workers);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
+  c4zero::arena::ArenaConfig bad_games_per_opening;
+  bad_games_per_opening.model_a = "unused-a.ts";
+  bad_games_per_opening.model_b = "unused-b.ts";
+  bad_games_per_opening.games_per_opening = 0;
+  threw = false;
+  try {
+    (void)c4zero::arena::play_checkpoint_match(bad_games_per_opening);
+  } catch (const std::invalid_argument&) {
+    threw = true;
+  }
+  C4ZERO_CHECK(threw);
+
   c4zero::arena::ArenaConfig ambiguous_side;
   ambiguous_side.model_a = "unused-a.ts";
   ambiguous_side.bot_a = "minimax3";
@@ -118,14 +142,25 @@ int main() {
   c4zero::arena::ArenaConfig bot_config;
   bot_config.bot_a = "minimax3";
   bot_config.bot_b = "one-ply-tactical";
-  bot_config.games = 2;
+  bot_config.games = 8;
   bot_config.simulations = 1;
+  bot_config.opening_count = 2;
+  bot_config.games_per_opening = 4;
+  bot_config.opening_plies = 2;
+  bot_config.arena_workers = 2;
   const auto bot_result = c4zero::arena::play_checkpoint_match(bot_config);
-  C4ZERO_CHECK_EQ(bot_result.games, 2);
-  C4ZERO_CHECK_EQ(bot_result.model_a_wins + bot_result.model_b_wins + bot_result.draws, 2);
+  C4ZERO_CHECK_EQ(bot_result.games, 8);
+  C4ZERO_CHECK_EQ(bot_result.model_a_wins + bot_result.model_b_wins + bot_result.draws, 8);
   C4ZERO_CHECK(bot_result.total_plies > 0);
+  C4ZERO_CHECK(!bot_result.root_noise);
+  C4ZERO_CHECK_EQ(bot_result.opening_count, 2);
+  C4ZERO_CHECK_EQ(bot_result.games_per_opening, 4);
+  C4ZERO_CHECK_EQ(bot_result.opening_plies, 2);
+  C4ZERO_CHECK_EQ(bot_result.arena_workers, 2);
   C4ZERO_CHECK(bot_result.summary().find("player_a=bot:minimax3") != std::string::npos);
   C4ZERO_CHECK(bot_result.summary().find("player_b=bot:one-ply-tactical") != std::string::npos);
+  C4ZERO_CHECK(bot_result.summary().find("root_noise=0") != std::string::npos);
+  C4ZERO_CHECK(bot_result.summary().find("opening_count=2") != std::string::npos);
 
   const char* fixture = std::getenv("C4ZERO_TORCHSCRIPT_FIXTURE");
   if (fixture == nullptr || std::string(fixture).empty()) {
@@ -136,12 +171,14 @@ int main() {
   c4zero::arena::ArenaConfig config;
   config.model_a = fixture;
   config.model_b = fixture;
-  config.games = 2;
+  config.games = 4;
   config.simulations = 1;
+  config.arena_workers = 2;
+  config.opening_count = 1;
   const auto result = c4zero::arena::play_checkpoint_match(config);
-  C4ZERO_CHECK_EQ(result.games, 2);
-  C4ZERO_CHECK_EQ(result.model_a_wins + result.model_b_wins + result.draws, 2);
+  C4ZERO_CHECK_EQ(result.games, 4);
+  C4ZERO_CHECK_EQ(result.model_a_wins + result.model_b_wins + result.draws, 4);
   C4ZERO_CHECK(result.total_plies > 0);
-  C4ZERO_CHECK(result.root_noise);
+  C4ZERO_CHECK(!result.root_noise);
   return 0;
 }

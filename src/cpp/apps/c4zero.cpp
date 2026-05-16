@@ -76,7 +76,7 @@ void usage() {
       << "  version --json\n"
       << "  bots\n"
       << "  botmatch --bot-a center --bot-b tactical --games 20\n"
-      << "  arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 20 --simulations 800\n"
+      << "  arena --model-a checkpoints/a/inference.ts --model-b checkpoints/b/inference.ts --games 64 --simulations 800 --arena-workers 4\n"
       << "  arena --model-a checkpoints/a/inference.ts --bot-b minimax5 --games 64 --simulations 800\n"
       << "  play --model checkpoints/current/inference.ts --simulations 800 --search-threads 4\n"
       << "  serve --model artifacts/.../inference.ts --simulations 800 --port 8080\n"
@@ -141,7 +141,11 @@ int run_arena(int argc, char** argv) {
   config.games = to_int(arg_value(argc, argv, "--games", "2"));
   config.simulations = to_int(arg_value(argc, argv, "--simulations", "800"));
   config.search_threads = to_int(arg_value(argc, argv, "--search-threads", "1"));
-  config.add_root_noise = !has_arg(argc, argv, "--no-root-noise");
+  config.arena_workers = to_int(arg_value(argc, argv, "--arena-workers", "4"));
+  config.opening_count = to_int(arg_value(argc, argv, "--opening-count", "0"));
+  config.opening_plies = to_int(arg_value(argc, argv, "--opening-plies", "4"));
+  config.games_per_opening = to_int(arg_value(argc, argv, "--games-per-opening", "4"));
+  config.add_root_noise = has_arg(argc, argv, "--root-noise") && !has_arg(argc, argv, "--no-root-noise");
   config.root_dirichlet_alpha = std::stod(arg_value(argc, argv, "--root-dirichlet-alpha", "0.625"));
   config.root_exploration_fraction = std::stod(arg_value(argc, argv, "--root-exploration-fraction", "0.25"));
   config.promotion_threshold = std::stod(arg_value(argc, argv, "--promotion-threshold", "0.55"));

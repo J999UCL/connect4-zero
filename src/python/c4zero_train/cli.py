@@ -65,6 +65,9 @@ def train_main(argv: list[str] | None = None) -> int:
     parser.add_argument("--augment-symmetries", action="store_true", help="Apply random 4x4 base-plane symmetries during replay sampling.")
     parser.add_argument("--symmetry-mode", choices=["none", "random", "orbit"])
     parser.add_argument("--batch-size", type=int, help="Training batch size; in orbit mode this is the base batch before 8-way expansion.")
+    parser.add_argument("--replay-sampling", choices=["uniform", "recent-mix"], default="uniform")
+    parser.add_argument("--recent-games", type=int, default=10_000)
+    parser.add_argument("--recent-fraction", type=float, default=0.75)
     parser.add_argument("--reset-optimizer", action="store_true", help="Resume model weights but start a fresh optimizer/scheduler.")
     parser.add_argument("--log-every-steps", type=int, default=0)
     args = parser.parse_args(argv)
@@ -93,6 +96,9 @@ def train_main(argv: list[str] | None = None) -> int:
         value_weight=args.value_weight,
         augment_symmetries=args.augment_symmetries,
         symmetry_mode=symmetry_mode,
+        replay_sampling=args.replay_sampling,
+        recent_games=args.recent_games,
+        recent_fraction=args.recent_fraction,
     )
     optimizer = make_optimizer(model, train_config)
     scheduler = make_scheduler(optimizer)
@@ -137,6 +143,9 @@ def train_main(argv: list[str] | None = None) -> int:
                         "base_batch_size": train_config.batch_size,
                         "effective_batch_size": len(samples),
                         "symmetry_mode": symmetry_mode,
+                        "replay_sampling": args.replay_sampling,
+                        "recent_games": args.recent_games,
+                        "recent_fraction": args.recent_fraction,
                         "samples_per_sec": trained_samples / elapsed,
                     },
                     sort_keys=True,
@@ -158,6 +167,7 @@ def train_main(argv: list[str] | None = None) -> int:
         "base_batch_size": train_config.batch_size,
         "effective_batch_size": train_config.batch_size * (8 if symmetry_mode == "orbit" else 1),
         "replay_games": replay_games,
+        **replay.sampling_metadata(train_config.replay_sampling_config()),
         **replay.metadata(),
     }
     save_checkpoint(args.out, model, optimizer, scheduler, step=final_step, epoch=start_epoch, replay_manifests=args.manifest, metrics=metrics)

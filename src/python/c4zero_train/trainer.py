@@ -10,7 +10,7 @@ import torch
 from c4zero_train.encoding import encode_samples
 from c4zero_train.losses import LossBreakdown, alpha_zero_loss
 from c4zero_train.model import AlphaZeroNet
-from c4zero_train.replay import ReplayBuffer
+from c4zero_train.replay import ReplayBuffer, ReplaySamplingConfig
 
 SymmetryMode = Literal["none", "random", "orbit"]
 
@@ -26,6 +26,16 @@ class TrainConfig:
     value_weight: float = 1.0
     augment_symmetries: bool = False
     symmetry_mode: SymmetryMode = "none"
+    replay_sampling: str = "uniform"
+    recent_games: int = 10_000
+    recent_fraction: float = 0.75
+
+    def replay_sampling_config(self) -> ReplaySamplingConfig:
+        return ReplaySamplingConfig(
+            mode=self.replay_sampling,
+            recent_games=self.recent_games,
+            recent_fraction=self.recent_fraction,
+        )
 
 
 def make_optimizer(model: AlphaZeroNet, config: TrainConfig) -> torch.optim.SGD:
@@ -94,14 +104,15 @@ def train_step(
 
 def sample_training_batch(replay: ReplayBuffer, config: TrainConfig, rng: random.Random):
     mode: SymmetryMode = config.symmetry_mode
+    sampling_config = config.replay_sampling_config()
     if config.augment_symmetries and mode == "none":
         mode = "random"
     if mode == "none":
-        return replay.sample_batch(config.batch_size, rng, augment_symmetries=False)
+        return replay.sample_batch(config.batch_size, rng, augment_symmetries=False, sampling_config=sampling_config)
     if mode == "random":
-        return replay.sample_batch(config.batch_size, rng, augment_symmetries=True)
+        return replay.sample_batch(config.batch_size, rng, augment_symmetries=True, sampling_config=sampling_config)
     if mode == "orbit":
-        return replay.sample_orbit_batch(config.batch_size, rng)
+        return replay.sample_orbit_batch(config.batch_size, rng, sampling_config=sampling_config)
     raise ValueError(f"unknown symmetry mode: {mode}")
 
 

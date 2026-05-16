@@ -26,16 +26,19 @@ class FakeReplay:
         self.sample_batch_calls = []
         self.sample_orbit_batch_calls = []
 
-    def sample_batch(self, batch_size, rng, augment_symmetries=False):
-        self.sample_batch_calls.append((batch_size, augment_symmetries))
+    def sample_batch(self, batch_size, rng, augment_symmetries=False, sampling_config=None):
+        self.sample_batch_calls.append((batch_size, augment_symmetries, sampling_config.mode))
         return [sample()] * batch_size
 
-    def sample_orbit_batch(self, base_batch_size, rng):
-        self.sample_orbit_batch_calls.append(base_batch_size)
+    def sample_orbit_batch(self, base_batch_size, rng, sampling_config=None):
+        self.sample_orbit_batch_calls.append((base_batch_size, sampling_config.mode, sampling_config.recent_games, sampling_config.recent_fraction))
         return [sample()] * (base_batch_size * 8)
 
     def metadata(self):
         return {"num_samples": len(self.samples), "num_games": 1}
+
+    def sampling_metadata(self, sampling_config):
+        return {"replay_sampling": sampling_config.mode}
 
 
 def patch_training(monkeypatch, replay):
@@ -74,7 +77,7 @@ def test_train_cli_random_symmetry_flag_reaches_replay(monkeypatch, tmp_path):
         ]
     )
 
-    assert replay.sample_batch_calls == [(8, True)]
+    assert replay.sample_batch_calls == [(8, True, "uniform")]
     assert replay.sample_orbit_batch_calls == []
 
 
@@ -100,4 +103,35 @@ def test_train_cli_orbit_symmetry_mode_uses_orbit_batch(monkeypatch, tmp_path):
     )
 
     assert replay.sample_batch_calls == []
-    assert replay.sample_orbit_batch_calls == [2]
+    assert replay.sample_orbit_batch_calls == [(2, "uniform", 10_000, 0.75)]
+
+
+def test_train_cli_recent_mix_reaches_orbit_replay(monkeypatch, tmp_path):
+    replay = FakeReplay()
+    patch_training(monkeypatch, replay)
+
+    train_cli.train_main(
+        [
+            "--preset",
+            "tiny",
+            "--manifest",
+            "manifest.json",
+            "--steps",
+            "1",
+            "--out",
+            str(tmp_path / "out"),
+            "--batch-size",
+            "2",
+            "--symmetry-mode",
+            "orbit",
+            "--replay-sampling",
+            "recent-mix",
+            "--recent-games",
+            "123",
+            "--recent-fraction",
+            "0.8",
+        ]
+    )
+
+    assert replay.sample_batch_calls == []
+    assert replay.sample_orbit_batch_calls == [(2, "recent-mix", 123, 0.8)]

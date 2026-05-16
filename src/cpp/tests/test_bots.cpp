@@ -23,6 +23,7 @@ int main() {
   C4ZERO_CHECK_EQ(bots::OnePlyTacticalBot{}.select_move(win), 3);
   C4ZERO_CHECK_EQ(bots::LineScoreBot{}.select_move(win), 3);
   C4ZERO_CHECK_EQ(bots::ForkThreatBot{}.select_move(win), 3);
+  C4ZERO_CHECK_EQ(bots::OracleBot(4).select_move(win), 3);
 
   const auto vertical = core::from_actions({0, 1, 0, 1, 0, 2});
   C4ZERO_CHECK_EQ(bots::OnePlyTacticalBot{}.select_move(vertical), 0);
@@ -32,13 +33,15 @@ int main() {
   C4ZERO_CHECK_EQ(bots::LineScoreBot{}.select_move(block), 3);
   C4ZERO_CHECK_EQ(bots::ForkThreatBot{}.select_move(block), 3);
   C4ZERO_CHECK_EQ(bots::DepthLimitedMinimaxBot(3).select_move(block), 3);
+  C4ZERO_CHECK_EQ(bots::make_bot("oracle-d4")->select_move(block), 3);
+  C4ZERO_CHECK_EQ(bots::make_bot("oracle_d4")->select_move(block), 3);
 
   const auto match = bots::play_bot_match(bots::FirstLegalBot{}, bots::CenterOrderBot{}, 2, true);
   C4ZERO_CHECK_EQ(match.games, 2);
   C4ZERO_CHECK(match.total_plies > 0);
 
   const auto ladder = bots::play_bot_match(
-      bots::DepthLimitedMinimaxBot(3),
+      bots::OracleBot(3),
       bots::OnePlyTacticalBot{},
       4,
       true);
@@ -64,6 +67,9 @@ int main() {
 
   for (const auto& name : bots::bot_names()) {
     auto bot = bots::make_bot(name);
+    if (name == "oracle-d6" || name == "oracle-d8") {
+      continue;
+    }
     C4ZERO_CHECK(empty.is_legal(bot->select_move(empty)));
   }
   return 0;

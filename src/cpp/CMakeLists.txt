@@ -25,10 +25,15 @@ target_include_directories(c4zero_core PUBLIC
   "${CMAKE_CURRENT_LIST_DIR}/include"
 )
 
+add_library(c4zero_oracle
+  src/oracle/solver.cpp
+)
+target_link_libraries(c4zero_oracle PUBLIC c4zero_core)
+
 add_library(c4zero_bots
   src/bots/heuristic.cpp
 )
-target_link_libraries(c4zero_bots PUBLIC c4zero_core)
+target_link_libraries(c4zero_bots PUBLIC c4zero_core c4zero_oracle)
 
 add_library(c4zero_search
   src/search/puct.cpp
@@ -76,6 +81,7 @@ add_executable(c4zero apps/c4zero.cpp)
 target_link_libraries(c4zero PRIVATE
   c4zero_core
   c4zero_bots
+  c4zero_oracle
   c4zero_search
   c4zero_data
   c4zero_curriculum
@@ -97,6 +103,7 @@ endfunction()
 
 c4zero_test(test_core)
 c4zero_test(test_bots)
+c4zero_test(test_oracle)
 c4zero_test(test_puct)
 c4zero_test(test_data)
 c4zero_test(test_version)

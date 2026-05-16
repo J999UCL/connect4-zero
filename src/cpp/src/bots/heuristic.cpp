@@ -1,6 +1,9 @@
 #include "c4zero/bots/heuristic.hpp"
 
+#include "c4zero/oracle/solver.hpp"
+
 #include <algorithm>
+#include <cctype>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -315,6 +318,41 @@ std::string DepthLimitedMinimaxBot::name() const {
   return "minimax-depth-" + std::to_string(depth_);
 }
 
+OracleBot::OracleBot(int depth, int tt_size_mb) : depth_(depth), tt_size_mb_(tt_size_mb) {
+  if (depth_ <= 0) {
+    throw std::invalid_argument("oracle bot depth must be positive");
+  }
+}
+
+core::Action OracleBot::select_move(const core::Position& position) const {
+  oracle::Solver solver(tt_size_mb_);
+  const auto result = solver.solve_with_move_values(position, depth_);
+  if (result.best_action < 0 || !position.is_legal(result.best_action)) {
+    throw std::runtime_error("OracleBot called on terminal position");
+  }
+  return result.best_action;
+}
+
+std::string OracleBot::name() const {
+  return "oracle-d" + std::to_string(depth_);
+}
+
+int parse_depth_suffix(const std::string& name, const std::string& prefix) {
+  if (name.rfind(prefix, 0) != 0) {
+    return -1;
+  }
+  const std::string suffix = name.substr(prefix.size());
+  if (suffix.empty()) {
+    return -1;
+  }
+  for (char ch : suffix) {
+    if (!std::isdigit(static_cast<unsigned char>(ch))) {
+      return -1;
+    }
+  }
+  return std::stoi(suffix);
+}
+
 std::unique_ptr<Bot> make_bot(const std::string& name) {
   if (name == "first" || name == "first-legal") return std::make_unique<FirstLegalBot>();
   if (name == "center" || name == "center-order") return std::make_unique<CenterOrderBot>();
@@ -323,11 +361,28 @@ std::unique_ptr<Bot> make_bot(const std::string& name) {
   if (name == "fork" || name == "fork-threat") return std::make_unique<ForkThreatBot>();
   if (name == "minimax3") return std::make_unique<DepthLimitedMinimaxBot>(3);
   if (name == "minimax5") return std::make_unique<DepthLimitedMinimaxBot>(5);
+  if (const int depth = parse_depth_suffix(name, "oracle-d"); depth > 0) {
+    return std::make_unique<OracleBot>(depth);
+  }
+  if (const int depth = parse_depth_suffix(name, "oracle_d"); depth > 0) {
+    return std::make_unique<OracleBot>(depth);
+  }
   throw std::invalid_argument("unknown bot: " + name);
 }
 
 std::vector<std::string> bot_names() {
-  return {"first-legal", "center-order", "one-ply-tactical", "line-score", "fork-threat", "minimax3", "minimax5"};
+  return {
+      "first-legal",
+      "center-order",
+      "one-ply-tactical",
+      "line-score",
+      "fork-threat",
+      "minimax3",
+      "minimax5",
+      "oracle-d2",
+      "oracle-d4",
+      "oracle-d6",
+      "oracle-d8"};
 }
 
 BotMatchResult play_bot_match(

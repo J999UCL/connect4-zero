@@ -140,7 +140,7 @@ int main() {
   C4ZERO_CHECK(not_promoted.summary().find("promote_model_a=0") != std::string::npos);
 
   c4zero::arena::ArenaConfig bot_config;
-  bot_config.bot_a = "minimax3";
+  bot_config.bot_a = "oracle-d2";
   bot_config.bot_b = "one-ply-tactical";
   bot_config.games = 8;
   bot_config.simulations = 1;
@@ -157,7 +157,7 @@ int main() {
   C4ZERO_CHECK_EQ(bot_result.games_per_opening, 4);
   C4ZERO_CHECK_EQ(bot_result.opening_plies, 2);
   C4ZERO_CHECK_EQ(bot_result.arena_workers, 2);
-  C4ZERO_CHECK(bot_result.summary().find("player_a=bot:minimax3") != std::string::npos);
+  C4ZERO_CHECK(bot_result.summary().find("player_a=bot:oracle-d2") != std::string::npos);
   C4ZERO_CHECK(bot_result.summary().find("player_b=bot:one-ply-tactical") != std::string::npos);
   C4ZERO_CHECK(bot_result.summary().find("root_noise=0") != std::string::npos);
   C4ZERO_CHECK(bot_result.summary().find("opening_count=2") != std::string::npos);

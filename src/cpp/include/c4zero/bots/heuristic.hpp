@@ -76,6 +76,17 @@ class DepthLimitedMinimaxBot final : public Bot {
   int depth_;
 };
 
+class OracleBot final : public Bot {
+ public:
+  explicit OracleBot(int depth = 4, int tt_size_mb = 64);
+  [[nodiscard]] core::Action select_move(const core::Position& position) const override;
+  [[nodiscard]] std::string name() const override;
+
+ private:
+  int depth_;
+  int tt_size_mb_;
+};
+
 [[nodiscard]] std::unique_ptr<Bot> make_bot(const std::string& name);
 [[nodiscard]] std::vector<std::string> bot_names();
 [[nodiscard]] BotMatchResult play_bot_match(

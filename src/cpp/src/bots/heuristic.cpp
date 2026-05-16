@@ -382,7 +382,8 @@ std::vector<std::string> bot_names() {
       "oracle-d2",
       "oracle-d4",
       "oracle-d6",
-      "oracle-d8"};
+      "oracle-d8",
+      "oracle-d16"};
 }
 
 BotMatchResult play_bot_match(

@@ -67,7 +67,7 @@ int main() {
 
   for (const auto& name : bots::bot_names()) {
     auto bot = bots::make_bot(name);
-    if (name == "oracle-d6" || name == "oracle-d8") {
+    if (name == "oracle-d6" || name == "oracle-d8" || name == "oracle-d16") {
       continue;
     }
     C4ZERO_CHECK(empty.is_legal(bot->select_move(empty)));
